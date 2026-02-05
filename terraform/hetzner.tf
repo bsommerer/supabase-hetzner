@@ -96,24 +96,25 @@ resource "hcloud_server" "supabase" {
 
     # Eingebettete Config-Dateien (gerendert via templatefile)
     supabase_env = templatefile("${path.module}/../cloud-init/configs/supabase.env.tpl", {
-      postgres_password  = var.postgres_password
-      jwt_secret         = var.jwt_secret
-      anon_key           = var.anon_key
-      service_role_key   = var.service_role_key
-      dashboard_username = var.dashboard_username
-      dashboard_password = var.dashboard_password
-      secret_key_base    = var.secret_key_base != "" ? var.secret_key_base : random_password.secret_key_base.result
-      vault_enc_key      = var.vault_enc_key != "" ? var.vault_enc_key : random_password.vault_enc_key.result
-      logflare_api_key   = var.logflare_api_key != "" ? var.logflare_api_key : random_password.logflare_api_key.result
-      domain             = "${var.subdomain}.${var.domain}"
-      acme_email         = var.acme_email
-      s3_endpoint        = var.s3_endpoint
-      s3_region          = var.s3_region
-      s3_access_key      = var.s3_access_key
-      s3_secret_key      = var.s3_secret_key
-      s3_storage_bucket  = var.s3_storage_bucket
-      s3_backup_bucket   = var.s3_backup_bucket
-      notification_urls  = var.notification_urls
+      postgres_password     = var.postgres_password
+      jwt_secret            = var.jwt_secret
+      anon_key              = var.anon_key
+      service_role_key      = var.service_role_key
+      dashboard_username    = var.dashboard_username
+      dashboard_password    = var.dashboard_password
+      secret_key_base       = var.secret_key_base != "" ? var.secret_key_base : random_password.secret_key_base.result
+      vault_enc_key         = var.vault_enc_key != "" ? var.vault_enc_key : random_password.vault_enc_key.result
+      logflare_api_key      = var.logflare_api_key != "" ? var.logflare_api_key : random_password.logflare_api_key.result
+      domain                = "${var.subdomain}.${var.domain}"
+      acme_email            = var.acme_email
+      s3_endpoint           = var.s3_endpoint
+      s3_region             = var.s3_region
+      s3_access_key         = var.s3_access_key
+      s3_secret_key         = var.s3_secret_key
+      s3_storage_bucket     = var.s3_storage_bucket
+      s3_backup_bucket      = var.s3_backup_bucket
+      notification_urls     = var.notification_urls
+      backup_encryption_key = var.backup_encryption_key
     })
 
     kong_config = templatefile("${path.module}/../cloud-init/configs/kong.yml.tpl", {

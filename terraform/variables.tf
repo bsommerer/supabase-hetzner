@@ -191,3 +191,14 @@ variable "backup_date" {
   type        = string
   default     = ""
 }
+
+# =============================================================================
+# Backup Encryption Variablen
+# =============================================================================
+
+variable "backup_encryption_key" {
+  description = "GPG Passphrase für Backup-Verschlüsselung (optional, leer = keine Verschlüsselung)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}

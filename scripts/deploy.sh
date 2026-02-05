@@ -14,6 +14,7 @@
 #   --destroy           Zerstört die Infrastruktur
 #   --restore DATE      Stellt Backup vom Datum wieder her (YYYY-MM-DD)
 #   --backup-now        Führt sofortiges Backup aus
+#   --test-backup       Testet Backup/Restore Funktionalität lokal
 #   --status            Zeigt Status der Infrastruktur
 #   --ssh               Verbindet via SSH zum Server
 #   --logs [SERVICE]    Zeigt Docker Logs (optional: spezifischer Service)
@@ -80,6 +81,7 @@ Optionen:
   ${GREEN}--destroy${NC}           Zerstört die Infrastruktur
   ${GREEN}--restore DATE${NC}      Stellt Backup vom Datum wieder her (Format: YYYY-MM-DD)
   ${GREEN}--backup-now${NC}        Führt sofortiges Backup aus
+  ${GREEN}--test-backup${NC}       Testet Backup/Restore Funktionalität lokal
   ${GREEN}--status${NC}            Zeigt Status der Infrastruktur
   ${GREEN}--ssh${NC}               Verbindet via SSH zum Server
   ${GREEN}--logs [SERVICE]${NC}    Zeigt Docker Logs (optional: spezifischer Service)
@@ -338,6 +340,7 @@ APPLY=false
 DESTROY=false
 RESTORE_DATE=""
 BACKUP_NOW=false
+TEST_BACKUP=false
 STATUS=false
 SSH=false
 LOGS=false
@@ -367,6 +370,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --backup-now)
             BACKUP_NOW=true
+            shift
+            ;;
+        --test-backup)
+            TEST_BACKUP=true
             shift
             ;;
         --status)
@@ -401,7 +408,7 @@ done
 # =============================================================================
 
 # Mindestens eine Option erforderlich
-if ! $INIT && ! $PLAN && ! $APPLY && ! $DESTROY && ! $BACKUP_NOW && ! $STATUS && ! $SSH && ! $LOGS; then
+if ! $INIT && ! $PLAN && ! $APPLY && ! $DESTROY && ! $BACKUP_NOW && ! $TEST_BACKUP && ! $STATUS && ! $SSH && ! $LOGS; then
     usage
 fi
 
@@ -427,6 +434,10 @@ fi
 
 if $BACKUP_NOW; then
     backup_now
+fi
+
+if $TEST_BACKUP; then
+    "$SCRIPT_DIR/test-backup.sh"
 fi
 
 if $STATUS; then

@@ -83,13 +83,33 @@ ${indent(6, restore_script)}
 
 runcmd:
   # ---------------------------------------------------------------------------
-  # System Setup
+  # Setup Logging & Error Handling
   # ---------------------------------------------------------------------------
-  - echo "=== Starting Supabase Setup ==="
+  - |
+    exec > >(tee -a /var/log/supabase-setup.log) 2>&1
+    echo "=== Supabase Setup started at $(date -Iseconds) ==="
 
-  # Docker aktivieren
-  - systemctl enable docker
-  - systemctl start docker
+  - |
+    set -euo pipefail
+    trap 'echo "ERROR at line $LINENO, exit code: $?" | tee -a /var/log/supabase-setup.log' ERR
+
+  # ---------------------------------------------------------------------------
+  # Docker Setup mit Retry
+  # ---------------------------------------------------------------------------
+  - |
+    echo "Enabling Docker..."
+    systemctl enable docker
+    systemctl start docker
+    for i in {1..30}; do
+      docker info &>/dev/null && break
+      echo "Waiting for Docker... ($i/30)"
+      sleep 2
+    done
+    if ! docker info &>/dev/null; then
+      echo "ERROR: Docker did not start!"
+      exit 1
+    fi
+    echo "Docker ready."
 
   # Docker Gruppe für ubuntu User
   - usermod -aG docker ubuntu
@@ -102,17 +122,35 @@ runcmd:
   - mkdir -p /opt/supabase/scripts
 
   # ---------------------------------------------------------------------------
-  # AWS CLI für S3 Backups installieren
+  # AWS CLI für S3 Backups installieren (mit Retry)
   # ---------------------------------------------------------------------------
-  - curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
-  - unzip -q /tmp/awscliv2.zip -d /tmp/
-  - /tmp/aws/install
-  - rm -rf /tmp/aws /tmp/awscliv2.zip
+  - |
+    echo "Installing AWS CLI..."
+    for i in {1..3}; do
+      curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip" && break
+      echo "AWS CLI download failed, retry $i/3..."
+      sleep 5
+    done
+    unzip -q /tmp/awscliv2.zip -d /tmp/
+    /tmp/aws/install
+    rm -rf /tmp/aws /tmp/awscliv2.zip
+    echo "AWS CLI installed."
 
   # ---------------------------------------------------------------------------
-  # Supabase Docker Setup klonen
+  # Supabase Docker Setup klonen (mit Retry)
   # ---------------------------------------------------------------------------
-  - git clone --depth 1 https://github.com/supabase/supabase /tmp/supabase-repo
+  - |
+    echo "Cloning Supabase repository..."
+    for i in {1..3}; do
+      git clone --depth 1 https://github.com/supabase/supabase /tmp/supabase-repo && break
+      echo "Git clone failed, retry $i/3..."
+      rm -rf /tmp/supabase-repo
+      sleep 10
+    done
+    if [ ! -d "/tmp/supabase-repo" ]; then
+      echo "ERROR: Failed to clone Supabase repository!"
+      exit 1
+    fi
 
   # Nur docker-compose.yml kopieren (nicht die .env)
   - cp /tmp/supabase-repo/docker/docker-compose.yml /opt/supabase/
@@ -127,14 +165,17 @@ runcmd:
   # ---------------------------------------------------------------------------
   # Firewall konfigurieren
   # ---------------------------------------------------------------------------
-  - ufw default deny incoming
-  - ufw default allow outgoing
-  - ufw allow 22/tcp    # SSH
-  - ufw allow 80/tcp    # HTTP (Let's Encrypt ACME)
-  - ufw allow 443/tcp   # HTTPS (Supabase)
-  - ufw allow 9443/tcp  # Portainer
-  - ufw allow 3001/tcp  # Uptime Kuma
-  - ufw --force enable
+  - |
+    echo "Configuring UFW firewall..."
+    ufw default deny incoming
+    ufw default allow outgoing
+    ufw allow 22/tcp    # SSH
+    ufw allow 80/tcp    # HTTP (Let's Encrypt ACME)
+    ufw allow 443/tcp   # HTTPS (Supabase)
+    ufw allow 9443/tcp  # Portainer
+    ufw allow 3001/tcp  # Uptime Kuma
+    ufw --force enable
+    echo "Firewall configured."
 
   # ---------------------------------------------------------------------------
   # Fail2ban aktivieren
@@ -143,24 +184,63 @@ runcmd:
   - systemctl start fail2ban
 
   # ---------------------------------------------------------------------------
+  # Docker Images pullen (mit Retry)
+  # ---------------------------------------------------------------------------
+  - |
+    echo "Pulling Docker images..."
+    cd /opt/supabase
+    for i in {1..3}; do
+      docker compose pull && break
+      echo "Docker pull failed, retry $i/3..."
+      sleep 15
+    done
+
+  # ---------------------------------------------------------------------------
   # Supabase starten
   # ---------------------------------------------------------------------------
-  - cd /opt/supabase && docker compose pull
-  - cd /opt/supabase && docker compose up -d
+  - |
+    echo "Starting Supabase services..."
+    cd /opt/supabase
+    docker compose up -d
+
+  # ---------------------------------------------------------------------------
+  # Warten auf Services + Health Check
+  # ---------------------------------------------------------------------------
+  - |
+    echo "Waiting for services to be healthy..."
+    sleep 30
+    cd /opt/supabase
+    for i in {1..30}; do
+      if docker compose ps | grep -q "healthy"; then
+        echo "Services are starting up..."
+      fi
+      # Check if db is ready
+      if docker compose exec -T db pg_isready -U postgres &>/dev/null; then
+        echo "Database is ready."
+        break
+      fi
+      echo "Waiting for database... ($i/30)"
+      sleep 5
+    done
 
   # ---------------------------------------------------------------------------
   # Optional: Restore von Backup
   # ---------------------------------------------------------------------------
 %{ if restore_from_backup ~}
-  - echo "=== Waiting for services to start before restore ==="
-  - sleep 60
-  - /opt/supabase/scripts/restore.sh "${backup_date}"
+  - |
+    echo "=== Preparing for restore from backup ==="
+    sleep 30
+    /opt/supabase/scripts/restore.sh "${backup_date}"
 %{ endif ~}
 
   # ---------------------------------------------------------------------------
-  # Fertig
+  # Final Status
   # ---------------------------------------------------------------------------
-  - echo "=== Supabase Setup Completed ==="
-  - echo "Dashboard: https://${domain}"
-  - echo "Portainer: https://${domain}:9443"
-  - echo "Uptime Kuma: http://${domain}:3001"
+  - |
+    echo "=== Supabase Setup completed at $(date -Iseconds) ==="
+    echo "Dashboard: https://${domain}"
+    echo "Portainer: https://${domain}:9443"
+    echo "Uptime Kuma: http://${domain}:3001"
+    echo ""
+    echo "Check status: docker compose ps"
+    echo "Check logs: /var/log/supabase-setup.log"

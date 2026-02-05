@@ -181,6 +181,26 @@ cleanup() {
 # Hauptfunktion
 # =============================================================================
 
+decrypt_backup() {
+    local encrypted_file=$1
+    local output_file=$2
+
+    if [ -n "${BACKUP_ENCRYPTION_KEY:-}" ]; then
+        echo "Entschlüssle Backup..."
+        gpg --batch --yes --passphrase "$BACKUP_ENCRYPTION_KEY" \
+            -d "$encrypted_file" > "$output_file"
+        rm -f "$encrypted_file"
+        print_success "Backup entschlüsselt"
+    else
+        # Kein Encryption Key - Datei umbenennen falls .gpg
+        if [[ "$encrypted_file" == *.gpg ]]; then
+            print_error "Backup ist verschlüsselt, aber BACKUP_ENCRYPTION_KEY fehlt!"
+            exit 1
+        fi
+        mv "$encrypted_file" "$output_file"
+    fi
+}
+
 do_restore() {
     local backup_file=$1
 
@@ -201,20 +221,32 @@ do_restore() {
     mkdir -p "$RESTORE_DIR"
 
     # 1. Download
-    print_header "1/5 - Backup herunterladen"
-    download_backup "$backup_file" "$RESTORE_DIR/backup.tar.gz"
+    print_header "1/6 - Backup herunterladen"
+    local download_file="$RESTORE_DIR/backup.tar.gz"
+    if [[ "$backup_file" == *.gpg ]]; then
+        download_file="$RESTORE_DIR/backup.tar.gz.gpg"
+    fi
+    download_backup "$backup_file" "$download_file"
 
-    # 2. Entpacken
-    print_header "2/5 - Backup entpacken"
+    # 2. Entschlüsseln (falls nötig)
+    print_header "2/6 - Backup entschlüsseln (falls verschlüsselt)"
+    if [[ "$backup_file" == *.gpg ]]; then
+        decrypt_backup "$download_file" "$RESTORE_DIR/backup.tar.gz"
+    else
+        echo "Backup ist nicht verschlüsselt, überspringe..."
+    fi
+
+    # 3. Entpacken
+    print_header "3/6 - Backup entpacken"
     tar -xzf "$RESTORE_DIR/backup.tar.gz" -C "$RESTORE_DIR"
     print_success "Backup entpackt"
 
-    # 3. Stop
-    print_header "3/5 - Services stoppen"
+    # 4. Stop
+    print_header "4/6 - Services stoppen"
     stop_services
 
-    # 4. Restore
-    print_header "4/5 - Datenbank wiederherstellen"
+    # 5. Restore
+    print_header "5/6 - Datenbank wiederherstellen"
     start_database
 
     local sql_dump=""
@@ -231,8 +263,8 @@ do_restore() {
         print_warning "Kein SQL Dump gefunden"
     fi
 
-    # 5. Start
-    print_header "5/5 - Services starten"
+    # 6. Start
+    print_header "6/6 - Services starten"
     start_all_services
 
     cleanup

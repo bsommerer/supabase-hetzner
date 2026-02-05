@@ -97,6 +97,8 @@ services:
       AWS_SECRET_ACCESS_KEY: "${S3_SECRET_KEY}"
       NOTIFICATION_URLS: "${NOTIFICATION_URLS:-}"
       NOTIFICATION_LEVEL: "error"
+      # GPG Encryption (optional - leave empty for no encryption)
+      GPG_PASSPHRASE: "${BACKUP_ENCRYPTION_KEY:-}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - db-data:/backup/db-data:ro

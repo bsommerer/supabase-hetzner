@@ -51,6 +51,9 @@ S3_BACKUP_BUCKET=${s3_backup_bucket}
 # Backup Notifications
 NOTIFICATION_URLS=${notification_urls}
 
+# Backup Encryption (optional - leave empty for no encryption)
+BACKUP_ENCRYPTION_KEY=${backup_encryption_key}
+
 # Studio
 STUDIO_DEFAULT_ORGANIZATION=Default Organization
 STUDIO_DEFAULT_PROJECT=Default Project
@@ -81,7 +84,7 @@ MAILER_URLPATHS_EMAIL_CHANGE=/auth/v1/verify
 PGRST_DB_SCHEMAS=public,storage,graphql_public
 
 # Functions
-FUNCTIONS_VERIFY_JWT=false
+FUNCTIONS_VERIFY_JWT=true
 
 # ImgProxy
 IMGPROXY_ENABLE_WEBP_DETECTION=true
