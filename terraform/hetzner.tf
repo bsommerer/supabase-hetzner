@@ -87,37 +87,47 @@ resource "hcloud_server" "supabase" {
   }
 
   user_data = templatefile("${path.module}/../cloud-init/user-data.yaml.tpl", {
-    # Supabase Konfiguration
-    postgres_password  = var.postgres_password
-    jwt_secret         = var.jwt_secret
-    anon_key           = var.anon_key
-    service_role_key   = var.service_role_key
-    dashboard_username = var.dashboard_username
-    dashboard_password = var.dashboard_password
-    secret_key_base    = var.secret_key_base != "" ? var.secret_key_base : random_password.secret_key_base.result
-    vault_enc_key      = var.vault_enc_key != "" ? var.vault_enc_key : random_password.vault_enc_key.result
-    logflare_api_key   = var.logflare_api_key != "" ? var.logflare_api_key : random_password.logflare_api_key.result
-
-    # Domain & SSL
-    domain      = var.domain
-    subdomain   = var.subdomain
-    acme_email  = var.acme_email
-    acme_domain = "${var.subdomain}.${var.domain}"
-
-    # S3 Konfiguration
-    s3_endpoint       = var.s3_endpoint
-    s3_region         = var.s3_region
-    s3_access_key     = var.s3_access_key
-    s3_secret_key     = var.s3_secret_key
-    s3_storage_bucket = var.s3_storage_bucket
-    s3_backup_bucket  = var.s3_backup_bucket
-
-    # Notifications
-    notification_urls = var.notification_urls
+    # Domain
+    domain = "${var.subdomain}.${var.domain}"
 
     # Restore
     restore_from_backup = var.restore_from_backup
     backup_date         = var.backup_date
+
+    # Eingebettete Config-Dateien (gerendert via templatefile)
+    supabase_env = templatefile("${path.module}/../cloud-init/configs/supabase.env.tpl", {
+      postgres_password  = var.postgres_password
+      jwt_secret         = var.jwt_secret
+      anon_key           = var.anon_key
+      service_role_key   = var.service_role_key
+      dashboard_username = var.dashboard_username
+      dashboard_password = var.dashboard_password
+      secret_key_base    = var.secret_key_base != "" ? var.secret_key_base : random_password.secret_key_base.result
+      vault_enc_key      = var.vault_enc_key != "" ? var.vault_enc_key : random_password.vault_enc_key.result
+      logflare_api_key   = var.logflare_api_key != "" ? var.logflare_api_key : random_password.logflare_api_key.result
+      domain             = "${var.subdomain}.${var.domain}"
+      acme_email         = var.acme_email
+      s3_endpoint        = var.s3_endpoint
+      s3_region          = var.s3_region
+      s3_access_key      = var.s3_access_key
+      s3_secret_key      = var.s3_secret_key
+      s3_storage_bucket  = var.s3_storage_bucket
+      s3_backup_bucket   = var.s3_backup_bucket
+      notification_urls  = var.notification_urls
+    })
+
+    kong_config = templatefile("${path.module}/../cloud-init/configs/kong.yml.tpl", {
+      anon_key           = var.anon_key
+      service_role_key   = var.service_role_key
+      dashboard_username = var.dashboard_username
+      dashboard_password = var.dashboard_password
+      acme_email         = var.acme_email
+      domain             = "${var.subdomain}.${var.domain}"
+    })
+
+    docker_compose_override = file("${path.module}/../cloud-init/configs/docker-compose.override.yml")
+
+    restore_script = file("${path.module}/../cloud-init/configs/restore.sh")
   })
 
   labels = {

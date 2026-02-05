@@ -159,9 +159,11 @@ temp/
 # Docker
 # =============================================================================
 
-# Docker Compose override (lokale Anpassungen)
-docker-compose.override.yml
-docker-compose.override.yaml
+# Docker Compose override im Root (lokale Anpassungen)
+/docker-compose.override.yml
+/docker-compose.override.yaml
+docker/docker-compose.override.yml
+docker/docker-compose.override.yaml
 
 # Docker volumes (falls lokal getestet)
 docker/volumes/db/data/

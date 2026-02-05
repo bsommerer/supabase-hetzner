@@ -1,0 +1,9 @@
+# =============================================================================
+# Python Requirements für lokale Tests
+# =============================================================================
+
+# YAML Parsing und Validierung
+pyyaml>=6.0
+
+# JWT Token Generierung (für generate-secrets.sh)
+PyJWT>=2.8.0

@@ -2,7 +2,7 @@
 # DNS Record
 # =============================================================================
 
-resource "cloudflare_dns_record" "supabase" {
+resource "cloudflare_record" "supabase" {
   zone_id = var.cloudflare_zone_id
   name    = var.subdomain
   type    = "A"
@@ -14,7 +14,7 @@ resource "cloudflare_dns_record" "supabase" {
 }
 
 # Optional: AAAA Record für IPv6
-resource "cloudflare_dns_record" "supabase_ipv6" {
+resource "cloudflare_record" "supabase_ipv6" {
   count = hcloud_server.supabase.ipv6_address != "" ? 1 : 0
 
   zone_id = var.cloudflare_zone_id
@@ -38,12 +38,11 @@ resource "cloudflare_healthcheck" "supabase" {
   type        = "HTTPS"
   description = "Supabase API Health Check"
 
-  http_config {
-    method           = "GET"
-    path             = "/rest/v1/"
-    expected_codes   = ["200", "401"] # 401 = API Key fehlt, aber Service läuft
-    follow_redirects = true
-  }
+  # HTTP-spezifische Einstellungen
+  method           = "GET"
+  path             = "/rest/v1/"
+  expected_codes   = ["200", "401"] # 401 = API Key fehlt, aber Service läuft
+  follow_redirects = true
 
   check_regions         = ["WEU", "ENAM"]
   consecutive_fails     = 3

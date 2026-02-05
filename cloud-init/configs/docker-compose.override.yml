@@ -1,0 +1,116 @@
+# =============================================================================
+# Docker Compose Override für zusätzliche Services
+# =============================================================================
+# Diese Datei erweitert die Standard Supabase docker-compose.yml um:
+# - Redis für Kong ACME (Let's Encrypt Zertifikate)
+# - Portainer (Container Management)
+# - Uptime Kuma (Monitoring)
+# - docker-volume-backup (Automatische Backups)
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Kong Override - ACME Plugin aktivieren
+  # ---------------------------------------------------------------------------
+  kong:
+    depends_on:
+      kongredis:
+        condition: service_healthy
+    environment:
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth,acme
+
+  # ---------------------------------------------------------------------------
+  # Database Override - Backup Labels hinzufügen
+  # ---------------------------------------------------------------------------
+  db:
+    labels:
+      - "docker-volume-backup.archive-pre=/bin/sh -c 'pg_dumpall -U postgres > /var/lib/postgresql/data/backup_dump.sql'"
+      - "docker-volume-backup.archive-post=/bin/sh -c 'rm -f /var/lib/postgresql/data/backup_dump.sql'"
+
+  # ---------------------------------------------------------------------------
+  # Redis für Kong ACME Zertifikate
+  # ---------------------------------------------------------------------------
+  kongredis:
+    container_name: supabase-redis
+    image: valkey/valkey:7.2-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    command: valkey-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    networks:
+      - default
+
+  # ---------------------------------------------------------------------------
+  # Portainer - Container Management UI
+  # ---------------------------------------------------------------------------
+  portainer:
+    container_name: portainer
+    image: portainer/portainer-ce:latest
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    ports:
+      - "9443:9443"
+    labels:
+      - "docker-volume-backup.stop-during-backup=false"
+    networks:
+      - default
+
+  # ---------------------------------------------------------------------------
+  # Uptime Kuma - Monitoring
+  # ---------------------------------------------------------------------------
+  uptime-kuma:
+    container_name: uptime-kuma
+    image: louislam/uptime-kuma:latest
+    restart: unless-stopped
+    volumes:
+      - uptime_kuma_data:/app/data
+    ports:
+      - "3001:3001"
+    labels:
+      - "docker-volume-backup.stop-during-backup=false"
+    networks:
+      - default
+
+  # ---------------------------------------------------------------------------
+  # docker-volume-backup - Automatische Backups zu S3
+  # ---------------------------------------------------------------------------
+  backup:
+    container_name: backup
+    image: offen/docker-volume-backup:v2
+    restart: unless-stopped
+    environment:
+      BACKUP_CRON_EXPRESSION: "${BACKUP_CRON_EXPRESSION:-0 3 * * *}"
+      BACKUP_RETENTION_DAYS: "${BACKUP_RETENTION_DAYS:-14}"
+      BACKUP_COMPRESSION: "gz"
+      BACKUP_FILENAME: "backup-%Y-%m-%dT%H-%M-%S.{{ .Extension }}"
+      AWS_S3_BUCKET_NAME: "${S3_BACKUP_BUCKET}"
+      AWS_S3_PATH: "supabase"
+      AWS_ENDPOINT: "${S3_ENDPOINT}"
+      AWS_ACCESS_KEY_ID: "${S3_ACCESS_KEY}"
+      AWS_SECRET_ACCESS_KEY: "${S3_SECRET_KEY}"
+      NOTIFICATION_URLS: "${NOTIFICATION_URLS:-}"
+      NOTIFICATION_LEVEL: "error"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - db-data:/backup/db-data:ro
+      - /opt/supabase/.env:/backup/config/.env:ro
+    networks:
+      - default
+
+# =============================================================================
+# Zusätzliche Volumes
+# =============================================================================
+volumes:
+  redis_data:
+    driver: local
+  portainer_data:
+    driver: local
+  uptime_kuma_data:
+    driver: local
