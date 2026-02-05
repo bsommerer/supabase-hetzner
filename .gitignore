@@ -1,0 +1,195 @@
+# =============================================================================
+# Supabase Hetzner - .gitignore
+# =============================================================================
+
+# =============================================================================
+# Terraform
+# =============================================================================
+
+# Local .terraform directories
+**/.terraform/*
+
+# .tfstate files
+*.tfstate
+*.tfstate.*
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Exclude all .tfvars files, which are likely to contain sensitive data
+*.tfvars
+*.tfvars.json
+
+# Aber terraform.tfvars.example behalten
+!terraform.tfvars.example
+
+# Secrets auto-generated file
+secrets.auto.tfvars
+
+# Override files as they are usually used to override resources locally
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Terraform CLI configuration files
+.terraformrc
+terraform.rc
+
+# Terraform lock file (optional - manche Teams committen diese)
+# .terraform.lock.hcl
+
+# =============================================================================
+# Secrets & Credentials
+# =============================================================================
+
+# Allgemeine Secrets
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# SSH Keys
+id_*
+!id_*.pub
+*.ppk
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# AWS Credentials
+.aws/
+
+# Supabase Secrets
+secrets/
+*.secret
+
+# =============================================================================
+# Editor & IDE
+# =============================================================================
+
+# VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# =============================================================================
+# OS Generated
+# =============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# =============================================================================
+# Logs & Temporary
+# =============================================================================
+
+# Logs
+*.log
+logs/
+log/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Cache
+.cache/
+*.cache
+
+# =============================================================================
+# Docker
+# =============================================================================
+
+# Docker Compose override (lokale Anpassungen)
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# Docker volumes (falls lokal getestet)
+docker/volumes/db/data/
+docker/volumes/storage/
+
+# =============================================================================
+# References (geclonte Dokumentation)
+# =============================================================================
+
+# References Ordner mit geclonten Repos
+references/
+
+# =============================================================================
+# Misc
+# =============================================================================
+
+# Node modules (falls für lokale Tools)
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+.venv/
+
+# Test outputs
+coverage/
+.coverage
+htmlcov/

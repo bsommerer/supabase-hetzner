@@ -1,0 +1,109 @@
+# =============================================================================
+# Supabase Hetzner - Terraform Variablen
+# =============================================================================
+# Kopiere diese Datei nach terraform.tfvars und fülle die Werte aus.
+# WICHTIG: terraform.tfvars NIEMALS in Git committen!
+# =============================================================================
+
+# =============================================================================
+# Hetzner Cloud
+# =============================================================================
+
+# API Token aus Hetzner Cloud Console
+# https://console.hetzner.cloud/projects/PROJECT_ID/security/tokens
+hcloud_token = ""
+
+# Server Typ
+# - cx22: 2 vCPU, 4 GB RAM, 40 GB SSD (~4 EUR/Monat) - Test/Dev
+# - cpx31: 4 vCPU, 8 GB RAM, 160 GB SSD (~15 EUR/Monat) - Produktion
+server_type = "cx22"
+
+# Standort
+# - nbg1: Nürnberg, Deutschland
+# - fsn1: Falkenstein, Deutschland
+# - hel1: Helsinki, Finnland
+location = "nbg1"
+
+# SSH Public Key (z.B. aus ~/.ssh/id_ed25519.pub)
+ssh_public_key = "ssh-ed25519 AAAA... your-email@example.com"
+
+# IP-Adressen für Admin-Zugang (SSH, Portainer, Uptime Kuma)
+# Ersetze mit deiner eigenen IP oder ["0.0.0.0/0"] für überall
+admin_ips = ["YOUR_IP/32"]
+
+# Umgebung
+environment = "prod"
+
+# =============================================================================
+# Cloudflare
+# =============================================================================
+
+# API Token mit DNS Edit Berechtigung
+# https://dash.cloudflare.com/profile/api-tokens
+cloudflare_api_token = ""
+
+# Zone ID (aus Domain-Übersicht in Cloudflare)
+cloudflare_zone_id = ""
+
+# Domain und Subdomain
+domain    = "example.com"
+subdomain = "supabase"
+
+# =============================================================================
+# Supabase Secrets
+# =============================================================================
+# Diese Werte werden von ./scripts/generate-secrets.sh generiert
+# und in secrets.auto.tfvars geschrieben.
+# Du kannst sie auch manuell hier eintragen.
+
+# PostgreSQL Passwort (nur alphanumerisch!)
+# postgres_password = ""
+
+# JWT Secret (min. 32 Zeichen)
+# jwt_secret = ""
+
+# API Keys (generiert mit JWT Secret)
+# anon_key = ""
+# service_role_key = ""
+
+# Dashboard Credentials
+dashboard_username = "admin"
+# dashboard_password = ""
+
+# Let's Encrypt E-Mail
+acme_email = "admin@example.com"
+
+# =============================================================================
+# Hetzner S3 (Object Storage)
+# =============================================================================
+# Der Bucket muss vorher manuell erstellt werden!
+
+# S3 Endpoint (z.B. https://fsn1.your-objectstorage.com)
+s3_endpoint = "https://fsn1.your-objectstorage.com"
+
+# Region (für Hetzner S3 kompatibilität)
+s3_region = "eu-central-1"
+
+# S3 Credentials
+s3_access_key = ""
+s3_secret_key = ""
+
+# Bucket Namen
+s3_storage_bucket = "supabase-storage"
+s3_backup_bucket  = "supabase-backups"
+
+# =============================================================================
+# Notifications (optional)
+# =============================================================================
+# Shoutrrr URL für Backup-Benachrichtigungen
+# Telegram: telegram://BOT_TOKEN@telegram?chats=CHAT_ID
+# Slack: slack://hook:WEBHOOK_ID@webhook
+# Discord: discord://TOKEN@WEBHOOK_ID
+notification_urls = ""
+
+# =============================================================================
+# Restore (optional)
+# =============================================================================
+# Auf true setzen um nach Deployment ein Backup wiederherzustellen
+restore_from_backup = false
+backup_date         = ""
