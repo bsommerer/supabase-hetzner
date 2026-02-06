@@ -108,6 +108,7 @@ resource "hcloud_server" "supabase" {
       domain                = "${var.subdomain}.${var.domain}"
       acme_email            = var.acme_email
       s3_endpoint           = var.s3_endpoint
+      s3_endpoint_host      = replace(replace(var.s3_endpoint, "https://", ""), "http://", "")
       s3_region             = var.s3_region
       s3_access_key         = var.s3_access_key
       s3_secret_key         = var.s3_secret_key

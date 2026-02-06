@@ -42,6 +42,7 @@ LOGFLARE_API_KEY=${logflare_api_key}
 # S3 Storage
 STORAGE_BACKEND=s3
 S3_ENDPOINT=${s3_endpoint}
+S3_ENDPOINT_HOST=${s3_endpoint_host}
 S3_REGION=${s3_region}
 S3_ACCESS_KEY=${s3_access_key}
 S3_SECRET_KEY=${s3_secret_key}

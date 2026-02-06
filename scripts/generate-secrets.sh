@@ -15,6 +15,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 OUTPUT_FILE="${1:-$PROJECT_DIR/terraform/secrets.auto.tfvars}"
 
+# Python Command (wird in check_requirements gesetzt)
+PYTHON_CMD=""
+PIP_CMD=""
+
 # Farben für Output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -35,8 +39,15 @@ check_requirements() {
         missing+=("openssl")
     fi
 
-    if ! command -v python3 &> /dev/null; then
-        missing+=("python3")
+    # Python kann python3 oder python heißen (Windows)
+    if command -v python3 &> /dev/null; then
+        PYTHON_CMD="python3"
+        PIP_CMD="pip3"
+    elif command -v python &> /dev/null; then
+        PYTHON_CMD="python"
+        PIP_CMD="pip"
+    else
+        missing+=("python3/python")
     fi
 
     if [ ${#missing[@]} -ne 0 ]; then
@@ -49,9 +60,9 @@ check_requirements() {
     fi
 
     # Prüfe ob PyJWT installiert ist
-    if ! python3 -c "import jwt" 2>/dev/null; then
+    if ! $PYTHON_CMD -c "import jwt" 2>/dev/null; then
         echo -e "${YELLOW}PyJWT wird installiert...${NC}"
-        pip3 install --quiet PyJWT
+        $PIP_CMD install --quiet PyJWT
     fi
 
     echo -e "${GREEN}✓ Alle Voraussetzungen erfüllt${NC}"
@@ -80,7 +91,7 @@ generate_jwt() {
     local role=$1
     local jwt_secret=$2
 
-    python3 << PYTHON
+    $PYTHON_CMD << PYTHON
 import jwt
 import time
 

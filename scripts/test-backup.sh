@@ -119,12 +119,17 @@ test_backup_create() {
         "echo 'Test data created at $(date)' > /data/test.txt && echo 'Supabase Backup Test' >> /data/test.txt"
 
     # Backup Environment vorbereiten
+    # Entferne https:// vom Endpoint (docker-volume-backup erwartet nur Hostname)
+    local endpoint_host="${S3_ENDPOINT#https://}"
+    endpoint_host="${endpoint_host#http://}"
+
     local backup_env=""
     backup_env="$backup_env -e AWS_ACCESS_KEY_ID=$S3_ACCESS_KEY"
     backup_env="$backup_env -e AWS_SECRET_ACCESS_KEY=$S3_SECRET_KEY"
     backup_env="$backup_env -e AWS_S3_BUCKET_NAME=$S3_BACKUP_BUCKET"
     backup_env="$backup_env -e AWS_S3_PATH=test-backups"
-    backup_env="$backup_env -e AWS_ENDPOINT=$S3_ENDPOINT"
+    backup_env="$backup_env -e AWS_ENDPOINT=$endpoint_host"
+    backup_env="$backup_env -e AWS_ENDPOINT_PROTO=https"
     backup_env="$backup_env -e BACKUP_FILENAME=test-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
     backup_env="$backup_env -e BACKUP_COMPRESSION=gz"
 
@@ -135,14 +140,17 @@ test_backup_create() {
     fi
 
     # Führe Backup aus
+    echo ""
     if docker run --rm \
         $backup_env \
         -v test-backup-data:/backup/data:ro \
-        offen/docker-volume-backup:v2 \
-        backup &>/dev/null; then
+        --entrypoint backup \
+        offen/docker-volume-backup:v2 2>&1; then
+        echo ""
         print_success "Test-Backup erstellt"
         return 0
     else
+        echo ""
         print_error "Backup fehlgeschlagen"
         return 1
     fi
@@ -189,15 +197,20 @@ test_restore() {
 
     echo "  Backup-Datei: $backup_file"
 
-    # Download
-    local temp_dir=$(mktemp -d)
+    # Download - Verwende Script-Verzeichnis statt mktemp für Windows-Kompatibilität
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local temp_dir="$script_dir/.test-restore-temp"
+    rm -rf "$temp_dir"
+    mkdir -p "$temp_dir"
+
     local download_file="$temp_dir/backup.tar.gz"
 
     if [[ "$backup_file" == *.gpg ]]; then
         download_file="$temp_dir/backup.tar.gz.gpg"
     fi
 
-    docker run --rm \
+    # MSYS_NO_PATHCONV=1 verhindert Pfad-Konvertierung unter Windows Git Bash
+    MSYS_NO_PATHCONV=1 docker run --rm \
         -e AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY" \
         -e AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY" \
         -v "$temp_dir:/download" \
@@ -210,9 +223,16 @@ test_restore() {
     if [[ "$backup_file" == *.gpg ]]; then
         if [ -n "${BACKUP_ENCRYPTION_KEY:-}" ]; then
             echo "  Entschlüssle Backup..."
-            echo "$BACKUP_ENCRYPTION_KEY" | gpg --batch --yes --passphrase-fd 0 \
-                -d "$download_file" > "$temp_dir/backup.tar.gz" 2>/dev/null
-            download_file="$temp_dir/backup.tar.gz"
+            # --quiet ist wichtig: ohne diese Flag schreibt GPG Status-Meldungen in stdout,
+            # was die Ausgabedatei korrupt macht
+            if gpg --batch --yes --quiet --passphrase "$BACKUP_ENCRYPTION_KEY" \
+                --decrypt "$download_file" > "$temp_dir/backup.tar.gz" 2>&1; then
+                download_file="$temp_dir/backup.tar.gz"
+            else
+                print_error "GPG Entschlüsselung fehlgeschlagen"
+                rm -rf "$temp_dir"
+                return 1
+            fi
         else
             print_error "Backup ist verschlüsselt, aber BACKUP_ENCRYPTION_KEY fehlt!"
             rm -rf "$temp_dir"
