@@ -1,0 +1,107 @@
+# =============================================================================
+# Caddy Reverse Proxy Configuration
+# =============================================================================
+# Caddy übernimmt SSL/TLS für alle Domains und routet zu den Services
+# - Automatische Let's Encrypt Zertifikate
+# - Optimiert für Supabase (WebSocket, große Uploads)
+# - Clean URLs für Portainer und Uptime Kuma
+# =============================================================================
+
+{
+	# Global options
+	email {$ACME_EMAIL}
+	auto_https on
+}
+
+# =============================================================================
+# Supabase - Hauptdomain (Pass-through zu Kong)
+# =============================================================================
+# Kong routet intern zu allen Supabase Services:
+#   /              - Studio Dashboard
+#   /rest/v1/      - PostgREST API
+#   /auth/v1/      - GoTrue Auth
+#   /realtime/v1/  - Realtime (WebSocket!)
+#   /storage/v1/   - Storage (große Uploads!)
+#   /functions/v1/ - Edge Functions
+#   /graphql/v1/   - GraphQL
+# =============================================================================
+{$DOMAIN} {
+	reverse_proxy kong:8000 {
+		# Headers durchreichen
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+
+		# WebSocket Support (für Realtime)
+		header_up Connection {>Connection}
+		header_up Upgrade {>Upgrade}
+
+		# Streaming für Realtime - keine Pufferung
+		flush_interval -1
+
+		# Timeouts für lange Verbindungen (WebSocket)
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+
+	# Request Body Limit für Storage Uploads (100MB)
+	request_body {
+		max_size 100MB
+	}
+
+	log {
+		output file /var/log/caddy/supabase.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+	}
+}
+
+# =============================================================================
+# Portainer - Container Management UI
+# =============================================================================
+portainer.{$DOMAIN} {
+	reverse_proxy https://portainer:9443 {
+		transport http {
+			tls_insecure_skip_verify
+		}
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	log {
+		output file /var/log/caddy/portainer.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+	}
+}
+
+# =============================================================================
+# Uptime Kuma - Status & Monitoring
+# =============================================================================
+status.{$DOMAIN} {
+	reverse_proxy uptime-kuma:3001 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+
+		# WebSocket Support (wichtig für Uptime Kuma Live-Updates!)
+		header_up Connection {>Connection}
+		header_up Upgrade {>Upgrade}
+		flush_interval -1
+	}
+
+	log {
+		output file /var/log/caddy/status.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+	}
+}

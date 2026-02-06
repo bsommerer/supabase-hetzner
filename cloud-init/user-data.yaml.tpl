@@ -70,6 +70,13 @@ ${indent(6, kong_config)}
 ${indent(6, docker_compose_override)}
 
   # ---------------------------------------------------------------------------
+  # Caddyfile (aus configs/Caddyfile)
+  # ---------------------------------------------------------------------------
+  - path: /opt/supabase/caddy/Caddyfile
+    content: |
+${indent(6, caddyfile)}
+
+  # ---------------------------------------------------------------------------
   # Restore Script (aus configs/restore.sh)
   # ---------------------------------------------------------------------------
   - path: /opt/supabase/scripts/restore.sh
@@ -120,6 +127,7 @@ runcmd:
   - mkdir -p /opt/supabase/volumes/api
   - mkdir -p /opt/supabase/volumes/db/data
   - mkdir -p /opt/supabase/scripts
+  - mkdir -p /opt/supabase/caddy
 
   # ---------------------------------------------------------------------------
   # AWS CLI für S3 Backups installieren (mit Retry)
@@ -169,11 +177,11 @@ runcmd:
     echo "Configuring UFW firewall..."
     ufw default deny incoming
     ufw default allow outgoing
-    ufw allow 22/tcp    # SSH
-    ufw allow 80/tcp    # HTTP (Let's Encrypt ACME)
-    ufw allow 443/tcp   # HTTPS (Supabase)
-    ufw allow 9443/tcp  # Portainer
-    ufw allow 3001/tcp  # Uptime Kuma
+    ufw allow 22/tcp     # SSH
+    ufw allow 80/tcp     # HTTP (Let's Encrypt ACME)
+    ufw allow 443/tcp    # HTTPS (Caddy - alle Services)
+    ufw allow 443/udp    # HTTP/3 (QUIC)
+    # Portainer und Uptime Kuma laufen über Caddy (Port 443)
     ufw --force enable
     echo "Firewall configured."
 
@@ -238,9 +246,11 @@ runcmd:
   # ---------------------------------------------------------------------------
   - |
     echo "=== Supabase Setup completed at $(date -Iseconds) ==="
-    echo "Dashboard: https://${domain}"
-    echo "Portainer: https://${domain}:9443"
-    echo "Uptime Kuma: http://${domain}:3001"
+    echo ""
+    echo "URLs (alle über Caddy mit SSL):"
+    echo "  Supabase:    https://${domain}"
+    echo "  Portainer:   https://portainer.${domain}"
+    echo "  Uptime Kuma: https://status.${domain}"
     echo ""
     echo "Check status: docker compose ps"
     echo "Check logs: /var/log/supabase-setup.log"

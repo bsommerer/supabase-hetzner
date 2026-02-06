@@ -13,10 +13,8 @@ resource "cloudflare_record" "supabase" {
   comment = "Supabase Self-Hosted - Managed by Terraform"
 }
 
-# Optional: AAAA Record für IPv6
+# AAAA Record für IPv6 (Hetzner Server haben immer IPv6)
 resource "cloudflare_record" "supabase_ipv6" {
-  count = hcloud_server.supabase.ipv6_address != "" ? 1 : 0
-
   zone_id = var.cloudflare_zone_id
   name    = var.subdomain
   type    = "AAAA"
@@ -25,6 +23,30 @@ resource "cloudflare_record" "supabase_ipv6" {
   proxied = false
 
   comment = "Supabase Self-Hosted IPv6 - Managed by Terraform"
+}
+
+# CNAME für Portainer (portainer.api.bsitservices.de)
+resource "cloudflare_record" "portainer" {
+  zone_id = var.cloudflare_zone_id
+  name    = "portainer.${var.subdomain}"
+  type    = "CNAME"
+  content = "${var.subdomain}.${var.domain}"
+  ttl     = 300
+  proxied = false
+
+  comment = "Portainer Management UI - Managed by Terraform"
+}
+
+# CNAME für Uptime Kuma / Status (status.api.bsitservices.de)
+resource "cloudflare_record" "status" {
+  zone_id = var.cloudflare_zone_id
+  name    = "status.${var.subdomain}"
+  type    = "CNAME"
+  content = "${var.subdomain}.${var.domain}"
+  ttl     = 300
+  proxied = false
+
+  comment = "Uptime Kuma Status Page - Managed by Terraform"
 }
 
 # =============================================================================

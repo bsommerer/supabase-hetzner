@@ -32,32 +32,26 @@ resource "hcloud_firewall" "supabase" {
     source_ips  = ["0.0.0.0/0", "::/0"]
   }
 
-  # HTTPS - Supabase API Gateway
+  # HTTPS - Caddy Reverse Proxy (alle Services)
   rule {
-    description = "HTTPS (Supabase)"
+    description = "HTTPS (Caddy)"
     direction   = "in"
     protocol    = "tcp"
     port        = "443"
     source_ips  = ["0.0.0.0/0", "::/0"]
   }
 
-  # Portainer - nur Admin-IPs
+  # HTTPS/UDP für HTTP/3 (QUIC)
   rule {
-    description = "Portainer"
+    description = "HTTP/3 (QUIC)"
     direction   = "in"
-    protocol    = "tcp"
-    port        = "9443"
-    source_ips  = var.admin_ips
+    protocol    = "udp"
+    port        = "443"
+    source_ips  = ["0.0.0.0/0", "::/0"]
   }
 
-  # Uptime Kuma - nur Admin-IPs
-  rule {
-    description = "Uptime Kuma"
-    direction   = "in"
-    protocol    = "tcp"
-    port        = "3001"
-    source_ips  = var.admin_ips
-  }
+  # Portainer und Uptime Kuma laufen jetzt über Caddy (Port 443)
+  # Keine separaten Ports mehr nötig!
 
   # ICMP (Ping)
   rule {
@@ -128,8 +122,8 @@ resource "hcloud_server" "supabase" {
     })
 
     docker_compose_override = file("${path.module}/../cloud-init/configs/docker-compose.override.yml")
-
-    restore_script = file("${path.module}/../cloud-init/configs/restore.sh")
+    caddyfile               = file("${path.module}/../cloud-init/configs/Caddyfile")
+    restore_script          = file("${path.module}/../cloud-init/configs/restore.sh")
   })
 
   labels = {

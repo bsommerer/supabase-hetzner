@@ -2,23 +2,13 @@
 # Docker Compose Override für zusätzliche Services
 # =============================================================================
 # Diese Datei erweitert die Standard Supabase docker-compose.yml um:
-# - Redis für Kong ACME (Let's Encrypt Zertifikate)
+# - Caddy (Reverse Proxy & SSL Termination)
 # - Portainer (Container Management)
 # - Uptime Kuma (Monitoring)
 # - docker-volume-backup (Automatische Backups)
 # =============================================================================
 
 services:
-  # ---------------------------------------------------------------------------
-  # Kong Override - ACME Plugin aktivieren
-  # ---------------------------------------------------------------------------
-  kong:
-    depends_on:
-      kongredis:
-        condition: service_healthy
-    environment:
-      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth,acme
-
   # ---------------------------------------------------------------------------
   # Database Override - Backup Labels hinzufügen
   # ---------------------------------------------------------------------------
@@ -28,22 +18,45 @@ services:
       - "docker-volume-backup.archive-post=/bin/sh -c 'rm -f /var/lib/postgresql/data/backup_dump.sql'"
 
   # ---------------------------------------------------------------------------
-  # Redis für Kong ACME Zertifikate
+  # Caddy - Reverse Proxy & SSL Termination
   # ---------------------------------------------------------------------------
-  kongredis:
-    container_name: supabase-redis
-    image: valkey/valkey:7.2-alpine
-    restart: unless-stopped
+  # KRITISCHER SERVICE - Muss immer laufen!
+  # Caddy ist der zentrale Entry Point für alle Domains
+  # ---------------------------------------------------------------------------
+  caddy:
+    container_name: caddy
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: "${SITE_URL#https://}"
+      ACME_EMAIL: "${ACME_EMAIL}"
     volumes:
-      - redis_data:/data
-    command: valkey-server --appendonly yes
-    healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 3
+      - /opt/supabase/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+          cpus: '0.25'
+    labels:
+      - "docker-volume-backup.stop-during-backup=false"
     networks:
       - default
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    stop_grace_period: 30s
 
   # ---------------------------------------------------------------------------
   # Portainer - Container Management UI
@@ -55,8 +68,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
-    ports:
-      - "9443:9443"
+    # Kein externer Port - Caddy proxied zu :9443
     labels:
       - "docker-volume-backup.stop-during-backup=false"
     networks:
@@ -71,8 +83,7 @@ services:
     restart: unless-stopped
     volumes:
       - uptime_kuma_data:/app/data
-    ports:
-      - "3001:3001"
+    # Kein externer Port - Caddy proxied zu :3001
     labels:
       - "docker-volume-backup.stop-during-backup=false"
     networks:
@@ -98,7 +109,6 @@ services:
       AWS_SECRET_ACCESS_KEY: "${S3_SECRET_KEY}"
       NOTIFICATION_URLS: "${NOTIFICATION_URLS:-}"
       NOTIFICATION_LEVEL: "error"
-      # GPG Encryption (optional - leave empty for no encryption)
       GPG_PASSPHRASE: "${BACKUP_ENCRYPTION_KEY:-}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -111,9 +121,13 @@ services:
 # Zusätzliche Volumes
 # =============================================================================
 volumes:
-  redis_data:
-    driver: local
   portainer_data:
     driver: local
   uptime_kuma_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
+  caddy_logs:
     driver: local

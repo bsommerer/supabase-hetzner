@@ -47,13 +47,13 @@ output "supabase_studio_url" {
 }
 
 output "portainer_url" {
-  description = "Portainer URL"
-  value       = "https://${var.subdomain}.${var.domain}:9443"
+  description = "Portainer URL (via Caddy Reverse Proxy)"
+  value       = "https://portainer.${var.subdomain}.${var.domain}"
 }
 
 output "uptime_kuma_url" {
-  description = "Uptime Kuma URL"
-  value       = "http://${var.subdomain}.${var.domain}:3001"
+  description = "Uptime Kuma URL (via Caddy Reverse Proxy)"
+  value       = "https://status.${var.subdomain}.${var.domain}"
 }
 
 # =============================================================================
