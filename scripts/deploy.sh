@@ -69,6 +69,87 @@ print_info() {
     echo -e "${CYAN}ℹ $1${NC}"
 }
 
+# =============================================================================
+# Deployment-Überwachung
+# =============================================================================
+
+wait_for_ssh() {
+    local server_ip="$1"
+    local max_attempts=60  # 5 Minuten
+    local attempt=1
+
+    print_info "Warte auf SSH-Verfügbarkeit ($server_ip)..."
+
+    while [ $attempt -le $max_attempts ]; do
+        if ssh -o ConnectTimeout=5 \
+               -o StrictHostKeyChecking=no \
+               -o BatchMode=yes \
+               -o LogLevel=ERROR \
+               "ubuntu@$server_ip" "exit 0" 2>/dev/null; then
+            print_success "SSH ist verfügbar"
+            return 0
+        fi
+
+        echo -ne "\r  ${YELLOW}⏳${NC} Warte auf SSH... [$attempt/$max_attempts]"
+        sleep 5
+        ((attempt++))
+    done
+
+    echo ""
+    print_error "SSH-Timeout nach $max_attempts Versuchen"
+    return 1
+}
+
+stream_cloud_init_log() {
+    local server_ip="$1"
+
+    print_header "Cloud-Init Log (Live Stream)"
+    print_info "Streaming /var/log/cloud-init-output.log"
+    print_info "Dies kann 5-10 Minuten dauern (Docker Pull, Setup, etc.)"
+    echo ""
+
+    # SSH mit tail -f - folgt dem Log bis Cloud-Init fertig ist
+    # boot-finished wird von cloud-init erstellt wenn alles fertig ist
+    ssh -o StrictHostKeyChecking=no "ubuntu@$server_ip" \
+        'tail -f /var/log/cloud-init-output.log 2>/dev/null & TAIL_PID=$!;
+         while [ ! -f /var/lib/cloud/instance/boot-finished ]; do sleep 2; done;
+         sleep 5;
+         kill $TAIL_PID 2>/dev/null;
+         echo "";
+         echo "=== Cloud-Init abgeschlossen ===";
+         echo ""' || true
+
+    print_success "Cloud-Init Installation abgeschlossen"
+}
+
+run_deployment_tests() {
+    local server_ip="$1"
+    local domain="$2"
+
+    print_header "Deployment Verifizierung"
+
+    # Prüfe ob test-deployment.sh existiert
+    if [ ! -f "$SCRIPT_DIR/test-deployment.sh" ]; then
+        print_warning "test-deployment.sh nicht gefunden - überspringe Tests"
+        return 0
+    fi
+
+    # Tests ausführen
+    "$SCRIPT_DIR/test-deployment.sh" "$server_ip" "$domain"
+    local test_result=$?
+
+    if [ $test_result -eq 0 ]; then
+        return 0
+    else
+        print_error "Tests fehlgeschlagen"
+        return 1
+    fi
+}
+
+# =============================================================================
+# Verwendung
+# =============================================================================
+
 usage() {
     cat << EOF
 ${BLUE}Supabase Deployment Script${NC}
@@ -196,10 +277,62 @@ terraform_apply() {
         apply_args+=("-var=backup_date=$restore_date")
     fi
 
+    # Terraform apply ausführen
     terraform apply "${apply_args[@]}"
+    local apply_result=$?
+
+    if [ $apply_result -ne 0 ]; then
+        print_error "Terraform apply fehlgeschlagen"
+        return 1
+    fi
 
     echo ""
-    print_success "Deployment abgeschlossen!"
+    print_success "Terraform apply abgeschlossen!"
+
+    # Server IP und Domain aus Outputs holen
+    local server_ip=$(terraform output -raw server_ip 2>/dev/null || echo "")
+    local domain=$(terraform output -raw supabase_url 2>/dev/null | sed 's|https://||')
+
+    if [ -z "$server_ip" ]; then
+        print_error "Konnte Server IP nicht ermitteln"
+        show_outputs
+        return 1
+    fi
+
+    echo ""
+    print_info "Server IP: $server_ip"
+    print_info "Domain: $domain"
+    echo ""
+
+    # === PHASE 1: Warte auf SSH ===
+    if ! wait_for_ssh "$server_ip"; then
+        print_error "SSH nicht erreichbar - Deployment fehlgeschlagen"
+        return 1
+    fi
+
+    echo ""
+
+    # === PHASE 2: Cloud-Init Log streamen ===
+    stream_cloud_init_log "$server_ip"
+
+    echo ""
+
+    # === PHASE 3: Automatische Tests ===
+    if run_deployment_tests "$server_ip" "$domain"; then
+        echo ""
+        echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${GREEN}║  🎉  DEPLOYMENT ERFOLGREICH                                ║${NC}"
+        echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
+    else
+        echo ""
+        print_warning "Tests fehlgeschlagen - bitte manuell prüfen"
+        echo ""
+        print_info "Debug-Befehle:"
+        echo "  $0 --ssh              # SSH zum Server"
+        echo "  $0 --logs             # Logs anzeigen"
+        echo "  $0 --status           # Status prüfen"
+    fi
+
     echo ""
     show_outputs
 }
