@@ -56,13 +56,6 @@ write_files:
 ${indent(6, supabase_env)}
 
   # ---------------------------------------------------------------------------
-  # Kong Konfiguration (aus configs/kong.yml.tpl)
-  # ---------------------------------------------------------------------------
-  - path: /opt/supabase/volumes/api/kong.yml
-    content: |
-${indent(6, kong_config)}
-
-  # ---------------------------------------------------------------------------
   # Docker Compose Override (aus configs/docker-compose.override.yml)
   # ---------------------------------------------------------------------------
   - path: /opt/supabase/docker-compose.override.yml
@@ -160,12 +153,9 @@ runcmd:
       exit 1
     fi
 
-  # Nur docker-compose.yml kopieren (nicht die .env)
+  # docker-compose.yml und volumes (inkl. Standard kong.yml) kopieren
   - cp /tmp/supabase-repo/docker/docker-compose.yml /opt/supabase/
   - cp -r /tmp/supabase-repo/docker/volumes /opt/supabase/
-
-  # Unsere Kong Konfiguration überschreibt die Standard-Konfiguration
-  # (wurde bereits via write_files nach /opt/supabase/volumes/api/kong.yml geschrieben)
 
   # Aufräumen
   - rm -rf /tmp/supabase-repo

@@ -112,15 +112,6 @@ resource "hcloud_server" "supabase" {
       backup_encryption_key = var.backup_encryption_key
     })
 
-    kong_config = templatefile("${path.module}/../cloud-init/configs/kong.yml.tpl", {
-      anon_key           = var.anon_key
-      service_role_key   = var.service_role_key
-      dashboard_username = var.dashboard_username
-      dashboard_password = var.dashboard_password
-      acme_email         = var.acme_email
-      domain             = "${var.subdomain}.${var.domain}"
-    })
-
     docker_compose_override = file("${path.module}/../cloud-init/configs/docker-compose.override.yml")
     caddyfile               = file("${path.module}/../cloud-init/configs/Caddyfile")
     restore_script          = file("${path.module}/../cloud-init/configs/restore.sh")

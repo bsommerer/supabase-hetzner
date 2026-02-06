@@ -8,8 +8,9 @@ Vollständig automatisiertes, wiederherstellbares Supabase Self-Hosting Setup au
 - **Cloudflare**: DNS Records + Health Checks
 - **Cloud-init**: Automatisches Server-Bootstrapping
 - **Docker Compose**: Supabase + Portainer + Uptime Kuma
-- **Let's Encrypt**: Automatische SSL-Zertifikate via Kong ACME
-- **Automatische Backups**: docker-volume-backup → Hetzner S3
+- **Caddy**: Reverse Proxy mit automatischen Let's Encrypt Zertifikaten
+- **Automatische Backups**: docker-volume-backup → Cloudflare R2 (S3-kompatibel)
+- **GPG-Verschlüsselung**: Optionale Backup-Verschlüsselung
 - **Disaster Recovery**: Vollständige Wiederherstellung aus Backup
 - **Monitoring**: Uptime Kuma + Cloudflare Health Checks
 - **Notifications**: Telegram/Slack/Discord bei Backup-Fehlern
@@ -20,17 +21,17 @@ Vollständig automatisiertes, wiederherstellbares Supabase Self-Hosting Setup au
 - [Hetzner Cloud Account](https://console.hetzner.cloud/)
 - [Cloudflare Account](https://dash.cloudflare.com/) (kostenlos)
 - Domain bei Cloudflare
-- Hetzner S3 Bucket (für Backups & Storage)
-- OpenSSL & Python3 (für Secret-Generierung)
+- S3-kompatibler Storage (Cloudflare R2, Hetzner S3, etc.)
+- Python3 + PyJWT (für Secret-Generierung)
 
 ## Kosten (ca.)
 
 | Ressource | Test | Produktion |
 |-----------|------|------------|
 | Hetzner VM | CX22: ~4€/Mo | CPX31: ~15€/Mo |
-| Hetzner S3 (100GB) | ~2.50€/Mo | ~2.50€/Mo |
+| Cloudflare R2 (100GB) | ~1.50€/Mo | ~1.50€/Mo |
 | Cloudflare | Kostenlos | Kostenlos |
-| **Gesamt** | **~6.50€/Mo** | **~17.50€/Mo** |
+| **Gesamt** | **~5.50€/Mo** | **~16.50€/Mo** |
 
 ## Schnellstart
 
@@ -53,65 +54,47 @@ Bearbeite `terraform/terraform.tfvars` und fülle alle Werte aus:
 - `cloudflare_api_token`: [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) (DNS Edit Permission)
 - `cloudflare_zone_id`: Cloudflare Dashboard → Domain → Overview → Zone ID
 - `ssh_public_key`: Dein öffentlicher SSH Key
-- `admin_ips`: Deine IP-Adresse für Admin-Zugang
-- `s3_*`: Hetzner Object Storage Credentials
+- `admin_ips`: Deine IP-Adresse für SSH-Zugang
+- `s3_*`: S3 Storage Credentials (Cloudflare R2 oder Hetzner S3)
 
-### 3. Deployment
-
-```bash
-# Secrets generieren und Terraform initialisieren
-./scripts/deploy.sh --init
-
-# Infrastruktur erstellen
-./scripts/deploy.sh --apply
-```
-
-### 4. Fertig!
-
-Nach ~5-10 Minuten ist Supabase unter `https://supabase.deine-domain.de` erreichbar.
-
-## Deployment Skript
+### 3. Secrets generieren
 
 ```bash
-# Hilfe anzeigen
-./scripts/deploy.sh --help
-
-# Erstmaliges Deployment
-./scripts/deploy.sh --init --apply
-
-# Nur Plan anzeigen
-./scripts/deploy.sh --plan
-
-# Status prüfen
-./scripts/deploy.sh --status
-
-# SSH Verbindung
-./scripts/deploy.sh --ssh
-
-# Logs anzeigen
-./scripts/deploy.sh --logs          # Alle Logs
-./scripts/deploy.sh --logs kong     # Nur Kong Logs
-
-# Manuelles Backup
-./scripts/deploy.sh --backup-now
-
-# Deployment mit Restore
-./scripts/deploy.sh --apply --restore 2024-01-15
-
-# Infrastruktur zerstören
-./scripts/deploy.sh --destroy
+./scripts/generate-secrets.sh
 ```
+
+### 4. Deployment
+
+```bash
+cd terraform
+terraform init
+terraform plan
+terraform apply
+```
+
+### 5. Fertig!
+
+Nach ~5-10 Minuten sind die Services erreichbar:
+
+| Service | URL |
+|---------|-----|
+| Supabase Studio | `https://api.deine-domain.de` |
+| Portainer | `https://portainer.api.deine-domain.de` |
+| Uptime Kuma | `https://status.api.deine-domain.de` |
 
 ## Zugang
 
 Nach dem Deployment:
 
-| Service | URL | Anmerkung |
-|---------|-----|-----------|
-| Supabase Studio | `https://supabase.domain.de` | Dashboard Username/Password |
-| Supabase API | `https://supabase.domain.de/rest/v1/` | Anon/Service Key |
-| Portainer | `https://supabase.domain.de:9443` | Nur von Admin-IPs |
-| Uptime Kuma | `http://supabase.domain.de:3001` | Nur von Admin-IPs |
+| Service | URL | Authentifizierung |
+|---------|-----|-------------------|
+| Supabase Studio | `https://api.domain.de` | Dashboard Username/Password |
+| Supabase REST API | `https://api.domain.de/rest/v1/` | Anon/Service Key |
+| Supabase Auth | `https://api.domain.de/auth/v1/` | Anon/Service Key |
+| Supabase Realtime | `https://api.domain.de/realtime/v1/` | Anon/Service Key |
+| Supabase Storage | `https://api.domain.de/storage/v1/` | Anon/Service Key |
+| Portainer | `https://portainer.api.domain.de` | Eigenes Setup |
+| Uptime Kuma | `https://status.api.domain.de` | Eigenes Setup |
 
 ## Backups
 
@@ -119,13 +102,32 @@ Nach dem Deployment:
 
 - **Zeitplan**: Täglich um 03:00 Uhr
 - **Aufbewahrung**: 14 Tage
-- **Ziel**: Hetzner S3 Bucket
-- **Inhalt**: PostgreSQL Dump + Docker Volumes
+- **Ziel**: S3 Bucket (Cloudflare R2)
+- **Inhalt**: PostgreSQL Dump (pg_dumpall) + .env Konfiguration
+- **Verschlüsselung**: Optional via GPG
+
+### Was wird gebackupt?
+
+| Komponente | Backup-Methode | Speicherort |
+|------------|----------------|-------------|
+| PostgreSQL DB | pg_dumpall → tar.gz | S3 Bucket |
+| Storage Files | - | Bereits in S3 (extern) |
+| Konfiguration | .env Datei | S3 Bucket + Git |
 
 ### Manuelles Backup
 
 ```bash
-./scripts/deploy.sh --backup-now
+# Via SSH auf dem Server
+ssh ubuntu@SERVER_IP
+docker exec backup /usr/local/bin/backup
+```
+
+### Backup-Verschlüsselung
+
+Setze `backup_encryption_key` in `terraform.tfvars`:
+
+```hcl
+backup_encryption_key = "dein-sicheres-passwort"
 ```
 
 ### Backup-Benachrichtigungen
@@ -148,7 +150,8 @@ notification_urls = "discord://TOKEN@WEBHOOK_ID"
 ### Verfügbare Backups anzeigen
 
 ```bash
-./scripts/restore.sh --list
+ssh ubuntu@SERVER_IP
+/opt/supabase/scripts/restore.sh --list
 ```
 
 ### Wiederherstellung
@@ -156,7 +159,8 @@ notification_urls = "discord://TOKEN@WEBHOOK_ID"
 **Option 1: Bei Neudeployment**
 
 ```bash
-./scripts/deploy.sh --apply --restore 2024-01-15
+cd terraform
+terraform apply -var="restore_from_backup=true" -var="backup_date=2024-01-15"
 ```
 
 **Option 2: Auf bestehendem Server**
@@ -169,7 +173,8 @@ ssh ubuntu@SERVER_IP
 **Option 3: Neuestes Backup**
 
 ```bash
-./scripts/restore.sh --latest
+ssh ubuntu@SERVER_IP
+/opt/supabase/scripts/restore.sh --latest
 ```
 
 ## Architektur
@@ -178,8 +183,10 @@ ssh ubuntu@SERVER_IP
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Cloudflare                                │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
-│  │ DNS Record  │  │Health Check │  │   Alerts    │              │
-│  └──────┬──────┘  └──────┬──────┘  └─────────────┘              │
+│  │ DNS Records │  │Health Check │  │   Alerts    │              │
+│  │  A + AAAA   │  └──────┬──────┘  └─────────────┘              │
+│  │  + CNAMEs   │         │                                       │
+│  └──────┬──────┘         │                                       │
 └─────────┼────────────────┼──────────────────────────────────────┘
           │                │
           ▼                ▼
@@ -187,44 +194,50 @@ ssh ubuntu@SERVER_IP
 │                     Hetzner Cloud VM                             │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │                     Docker Compose                        │   │
+│  │                                                           │   │
 │  │  ┌─────────────────────────────────────────────────────┐ │   │
-│  │  │                    Kong (HTTPS)                      │ │   │
-│  │  │              + Let's Encrypt ACME                    │ │   │
-│  │  └────────────────────────┬────────────────────────────┘ │   │
-│  │                           │                               │   │
-│  │  ┌────────┐ ┌────────┐ ┌─┴──────┐ ┌────────┐ ┌────────┐ │   │
-│  │  │ Studio │ │  Auth  │ │  REST  │ │Realtime│ │Storage │ │   │
-│  │  └────────┘ └────────┘ └────────┘ └────────┘ └────┬───┘ │   │
-│  │                           │                        │      │   │
-│  │  ┌────────────────────────┴────────────────────────┼───┐ │   │
-│  │  │              PostgreSQL + Pooler                │   │ │   │
-│  │  └─────────────────────────────────────────────────┘   │ │   │
-│  │                                                    │   │ │   │
-│  │  ┌───────────┐  ┌────────────┐  ┌───────────────┐ │   │ │   │
-│  │  │ Portainer │  │Uptime Kuma │  │    Backup     │─┼───┼─┼─┐ │
-│  │  └───────────┘  └────────────┘  └───────────────┘ │   │ │ │ │
-│  └───────────────────────────────────────────────────┼───┼─┘ │ │
-└──────────────────────────────────────────────────────┼───┼───┼─┘
-                                                       │   │   │
-                                                       ▼   ▼   ▼
+│  │  │              Caddy (HTTPS - Port 443)               │ │   │
+│  │  │           Let's Encrypt Zertifikate                 │ │   │
+│  │  └──────┬──────────────┬──────────────┬───────────────┘ │   │
+│  │         │              │              │                  │   │
+│  │         ▼              ▼              ▼                  │   │
+│  │  ┌────────────┐ ┌───────────┐ ┌────────────┐            │   │
+│  │  │    Kong    │ │ Portainer │ │Uptime Kuma │            │   │
+│  │  │ (API GW)   │ │  (:9443)  │ │  (:3001)   │            │   │
+│  │  └──────┬─────┘ └───────────┘ └────────────┘            │   │
+│  │         │                                                │   │
+│  │  ┌──────┴─────────────────────────────────────────────┐ │   │
+│  │  │ Studio │ Auth │ REST │ Realtime │ Storage │ Funcs  │ │   │
+│  │  └────────────────────────┬───────────────────────────┘ │   │
+│  │                           │                              │   │
+│  │  ┌────────────────────────┴───────────────────────────┐ │   │
+│  │  │              PostgreSQL + Pooler                    │ │   │
+│  │  └─────────────────────────────────────────────────────┘ │   │
+│  │                                                           │   │
+│  │  ┌─────────────────────────────────────────────────────┐ │   │
+│  │  │           docker-volume-backup → S3                 │ │   │
+│  │  └─────────────────────────────────────────────────────┘ │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      Hetzner S3                                  │
+│                    Cloudflare R2 (S3)                            │
 │  ┌─────────────────────┐    ┌─────────────────────┐             │
 │  │  supabase-storage   │    │  supabase-backups   │             │
-│  │    (User Files)     │    │   (DB + Volumes)    │             │
+│  │    (User Files)     │    │   (DB + Config)     │             │
 │  └─────────────────────┘    └─────────────────────┘             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ## Firewall Regeln
 
-| Port | Service | Zugriff |
-|------|---------|---------|
-| 22 | SSH | Nur Admin-IPs |
-| 80 | HTTP | Alle (Let's Encrypt ACME) |
-| 443 | HTTPS | Alle (Supabase API) |
-| 9443 | Portainer | Nur Admin-IPs |
-| 3001 | Uptime Kuma | Nur Admin-IPs |
+| Port | Protokoll | Service | Zugriff |
+|------|-----------|---------|---------|
+| 22 | TCP | SSH | Nur Admin-IPs |
+| 80 | TCP | HTTP | Alle (Let's Encrypt ACME) |
+| 443 | TCP | HTTPS | Alle (Caddy → alle Services) |
+| 443 | UDP | HTTP/3 (QUIC) | Alle |
 
 ## Sicherheit
 
@@ -233,9 +246,10 @@ ssh ubuntu@SERVER_IP
 - Hetzner Firewall + UFW
 - Automatische Sicherheitsupdates (unattended-upgrades)
 - PostgreSQL nicht öffentlich erreichbar
-- Admin-Tools nur von konfigurierten IPs
+- Alle Services hinter Caddy Reverse Proxy
+- Optionale GPG-Verschlüsselung für Backups
 
-## Dateistruktur
+## Projektstruktur
 
 ```
 supabase-hetzner/
@@ -244,18 +258,21 @@ supabase-hetzner/
 │   ├── variables.tf             # Variablen-Definitionen
 │   ├── outputs.tf               # Outputs
 │   ├── providers.tf             # Provider-Konfiguration
-│   ├── hetzner.tf               # Hetzner Ressourcen
-│   ├── cloudflare.tf            # Cloudflare DNS + Health
+│   ├── hetzner.tf               # Hetzner Ressourcen (VM, Firewall)
+│   ├── cloudflare.tf            # Cloudflare DNS + Health Check
 │   └── terraform.tfvars.example # Beispiel-Konfiguration
 ├── cloud-init/
-│   └── user-data.yaml.tpl       # Server-Bootstrapping
-├── docker/
-│   └── .env.example             # Docker Umgebungsvariablen
+│   ├── user-data.yaml.tpl       # Server-Bootstrapping Template
+│   └── configs/
+│       ├── Caddyfile            # Caddy Reverse Proxy Config
+│       ├── docker-compose.override.yml  # Zusätzliche Services
+│       ├── supabase.env.tpl     # Supabase Umgebungsvariablen
+│       └── restore.sh           # Server Restore Script
 ├── scripts/
-│   ├── deploy.sh                # Deployment-Automatisierung
-│   ├── generate-secrets.sh      # Secret-Generierung
-│   ├── restore.sh               # Disaster Recovery
-│   └── backup-now.sh            # Manuelles Backup
+│   ├── generate-secrets.sh      # Secret-Generierung (JWT Keys etc.)
+│   ├── test-backup.sh           # Lokaler Backup-Test
+│   ├── backup-now.sh            # Manuelles Backup triggern
+│   └── deploy.sh                # Deployment-Hilfsscript
 └── README.md
 ```
 
@@ -264,40 +281,52 @@ supabase-hetzner/
 ### SSL-Zertifikat wird nicht ausgestellt
 
 ```bash
-# Kong Logs prüfen
-./scripts/deploy.sh --logs kong
+# Caddy Logs prüfen
+ssh ubuntu@SERVER_IP
+docker logs caddy
 
-# ACME Challenge prüfen
-curl -v http://supabase.domain.de/.well-known/acme-challenge/test
+# DNS prüfen
+dig api.domain.de
+dig portainer.api.domain.de
 ```
 
 ### Datenbank-Verbindung fehlgeschlagen
 
 ```bash
-# PostgreSQL Status prüfen
-./scripts/deploy.sh --ssh
+ssh ubuntu@SERVER_IP
+cd /opt/supabase
 docker compose logs db
+docker compose exec db pg_isready -U postgres
 ```
 
 ### Backup fehlgeschlagen
 
 ```bash
-# Backup Logs prüfen
-./scripts/deploy.sh --logs backup
+ssh ubuntu@SERVER_IP
+docker logs backup
 
-# S3 Verbindung testen
-aws --endpoint-url $S3_ENDPOINT s3 ls s3://$S3_BACKUP_BUCKET/
+# S3 Verbindung testen (lokal)
+./scripts/test-backup.sh
 ```
 
 ### Services starten nicht
 
 ```bash
-# Alle Services prüfen
-./scripts/deploy.sh --status
+ssh ubuntu@SERVER_IP
+cd /opt/supabase
+docker compose ps
+docker compose logs
 
 # Einzelnen Service neustarten
-./scripts/deploy.sh --ssh
-docker compose restart kong
+docker compose restart caddy
+```
+
+### Cloud-init Logs prüfen
+
+```bash
+ssh ubuntu@SERVER_IP
+cat /var/log/supabase-setup.log
+cat /var/log/cloud-init-output.log
 ```
 
 ## Lizenz
