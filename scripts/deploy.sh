@@ -13,6 +13,7 @@
 #   --apply             Führt terraform apply aus
 #   --destroy           Zerstört die Infrastruktur
 #   --restore DATE      Stellt Backup vom Datum wieder her (YYYY-MM-DD)
+#   --list-backups      Zeigt verfügbare Backups an
 #   --backup-now        Führt sofortiges Backup aus
 #   --test-backup       Testet Backup/Restore Funktionalität lokal
 #   --status            Zeigt Status der Infrastruktur
@@ -80,6 +81,7 @@ Optionen:
   ${GREEN}--apply${NC}             Führt terraform apply aus
   ${GREEN}--destroy${NC}           Zerstört die Infrastruktur
   ${GREEN}--restore DATE${NC}      Stellt Backup vom Datum wieder her (Format: YYYY-MM-DD)
+  ${GREEN}--list-backups${NC}      Zeigt verfügbare Backups an
   ${GREEN}--backup-now${NC}        Führt sofortiges Backup aus
   ${GREEN}--test-backup${NC}       Testet Backup/Restore Funktionalität lokal
   ${GREEN}--status${NC}            Zeigt Status der Infrastruktur
@@ -330,6 +332,37 @@ backup_now() {
     print_info "Prüfe Backup-Status mit: $0 --logs backup"
 }
 
+list_backups() {
+    print_header "Verfügbare Backups"
+
+    check_tfvars
+
+    # S3 Credentials aus terraform.tfvars laden
+    local tfvars="$TERRAFORM_DIR/terraform.tfvars"
+    local s3_endpoint=$(grep 's3_endpoint' "$tfvars" | sed 's/.*=.*"\(.*\)"/\1/' | tr -d ' ')
+    local s3_access_key=$(grep 's3_access_key' "$tfvars" | sed 's/.*=.*"\(.*\)"/\1/' | tr -d ' ')
+    local s3_secret_key=$(grep 's3_secret_key' "$tfvars" | sed 's/.*=.*"\(.*\)"/\1/' | tr -d ' ')
+    local s3_backup_bucket=$(grep 's3_backup_bucket' "$tfvars" | sed 's/.*=.*"\(.*\)"/\1/' | tr -d ' ')
+
+    if [ -z "$s3_endpoint" ] || [ -z "$s3_access_key" ] || [ -z "$s3_backup_bucket" ]; then
+        print_error "S3 Credentials nicht vollständig in terraform.tfvars"
+        exit 1
+    fi
+
+    print_info "Bucket: s3://$s3_backup_bucket/supabase/"
+    echo ""
+
+    # Liste Backups via Docker (aws-cli)
+    docker run --rm \
+        -e AWS_ACCESS_KEY_ID="$s3_access_key" \
+        -e AWS_SECRET_ACCESS_KEY="$s3_secret_key" \
+        amazon/aws-cli \
+        --endpoint-url "$s3_endpoint" \
+        s3 ls "s3://$s3_backup_bucket/supabase/" \
+        --human-readable 2>/dev/null | grep -E "backup-" | tail -20 || \
+        print_warning "Keine Backups gefunden oder S3 nicht erreichbar"
+}
+
 # =============================================================================
 # Argument Parsing
 # =============================================================================
@@ -339,6 +372,7 @@ PLAN=false
 APPLY=false
 DESTROY=false
 RESTORE_DATE=""
+LIST_BACKUPS=false
 BACKUP_NOW=false
 TEST_BACKUP=false
 STATUS=false
@@ -367,6 +401,10 @@ while [[ $# -gt 0 ]]; do
         --restore)
             RESTORE_DATE="$2"
             shift 2
+            ;;
+        --list-backups)
+            LIST_BACKUPS=true
+            shift
             ;;
         --backup-now)
             BACKUP_NOW=true
@@ -408,7 +446,7 @@ done
 # =============================================================================
 
 # Mindestens eine Option erforderlich
-if ! $INIT && ! $PLAN && ! $APPLY && ! $DESTROY && ! $BACKUP_NOW && ! $TEST_BACKUP && ! $STATUS && ! $SSH && ! $LOGS; then
+if ! $INIT && ! $PLAN && ! $APPLY && ! $DESTROY && ! $LIST_BACKUPS && ! $BACKUP_NOW && ! $TEST_BACKUP && ! $STATUS && ! $SSH && ! $LOGS; then
     usage
 fi
 
@@ -430,6 +468,10 @@ fi
 
 if $APPLY; then
     terraform_apply "$RESTORE_DATE"
+fi
+
+if $LIST_BACKUPS; then
+    list_backups
 fi
 
 if $BACKUP_NOW; then
