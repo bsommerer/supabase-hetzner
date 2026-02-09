@@ -1,13 +1,4 @@
 # =============================================================================
-# SSH Key
-# =============================================================================
-
-resource "hcloud_ssh_key" "main" {
-  name       = "supabase-${var.environment}"
-  public_key = var.ssh_public_key
-}
-
-# =============================================================================
 # Firewall
 # =============================================================================
 
@@ -50,8 +41,7 @@ resource "hcloud_firewall" "supabase" {
     source_ips  = ["0.0.0.0/0", "::/0"]
   }
 
-  # Portainer und Uptime Kuma laufen jetzt über Caddy (Port 443)
-  # Keine separaten Ports mehr nötig!
+  # Portainer läuft über Caddy (Port 443)
 
   # ICMP (Ping)
   rule {
@@ -72,7 +62,6 @@ resource "hcloud_server" "supabase" {
   server_type = var.server_type
   location    = var.location
 
-  ssh_keys     = [hcloud_ssh_key.main.id]
   firewall_ids = [hcloud_firewall.supabase.id]
 
   public_net {
@@ -81,15 +70,13 @@ resource "hcloud_server" "supabase" {
   }
 
   user_data = templatefile("${path.module}/../cloud-init/user-data.yaml.tpl", {
-    # Domain
-    domain = "${var.subdomain}.${var.domain}"
-
-    # Restore
+    domain              = "${var.subdomain}.${var.domain}"
+    ssh_public_key      = var.ssh_public_key
     restore_from_backup = var.restore_from_backup
     backup_date         = var.backup_date
 
-    # Eingebettete Config-Dateien (gerendert via templatefile)
-    supabase_env = templatefile("${path.module}/../cloud-init/configs/supabase.env.tpl", {
+    # Config-Dateien gz+b64 kodiert (CRLF→LF für Linux-Kompatibilität)
+    supabase_env = base64gzip(replace(templatefile("${path.module}/../cloud-init/configs/supabase.env.tpl", {
       postgres_password     = var.postgres_password
       jwt_secret            = var.jwt_secret
       anon_key              = var.anon_key
@@ -110,24 +97,17 @@ resource "hcloud_server" "supabase" {
       s3_backup_bucket      = var.s3_backup_bucket
       notification_urls     = var.notification_urls
       backup_encryption_key = var.backup_encryption_key
-    })
+    }), "\r\n", "\n"))
 
-    docker_compose_override = file("${path.module}/../cloud-init/configs/docker-compose.override.yml")
-    caddyfile               = file("${path.module}/../cloud-init/configs/Caddyfile")
-    restore_script          = file("${path.module}/../cloud-init/configs/restore.sh")
+    docker_compose_override = base64gzip(replace(file("${path.module}/../cloud-init/configs/docker-compose.override.yml"), "\r\n", "\n"))
+    caddyfile               = base64gzip(replace(file("${path.module}/../cloud-init/configs/Caddyfile"), "\r\n", "\n"))
+    restore_script          = base64gzip(replace(file("${path.module}/../cloud-init/configs/restore.sh"), "\r\n", "\n"))
   })
 
   labels = {
     environment = var.environment
     managed_by  = "terraform"
     service     = "supabase"
-  }
-
-  lifecycle {
-    ignore_changes = [
-      ssh_keys,
-      user_data
-    ]
   }
 }
 

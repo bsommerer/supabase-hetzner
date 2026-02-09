@@ -51,11 +51,6 @@ output "portainer_url" {
   value       = "https://portainer.${var.subdomain}.${var.domain}"
 }
 
-output "uptime_kuma_url" {
-  description = "Uptime Kuma URL (via Caddy Reverse Proxy)"
-  value       = "https://status.${var.subdomain}.${var.domain}"
-}
-
 # =============================================================================
 # SSH Outputs
 # =============================================================================
@@ -72,13 +67,4 @@ output "ssh_command" {
 output "firewall_id" {
   description = "Hetzner Firewall ID"
   value       = hcloud_firewall.supabase.id
-}
-
-# =============================================================================
-# Health Check Outputs
-# =============================================================================
-
-output "healthcheck_id" {
-  description = "Cloudflare Health Check ID"
-  value       = cloudflare_healthcheck.supabase.id
 }

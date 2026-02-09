@@ -24,6 +24,9 @@
 
 set -euo pipefail
 
+# SSH Optionen - kein Passwort, nur Key Auth
+SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no -o BatchMode=yes"
+
 # Farben
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -43,7 +46,6 @@ fi
 
 # Subdomains
 PORTAINER_DOMAIN="portainer.$DOMAIN"
-STATUS_DOMAIN="status.$DOMAIN"
 
 # =============================================================================
 # Hilfsfunktionen
@@ -100,7 +102,7 @@ test_ssh() {
     print_test_header "TEST 1: SSH Konnektivität"
 
     retry_test "SSH verfügbar" \
-        "ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes ubuntu@$SERVER_IP 'exit 0'" \
+        "ssh $SSH_OPTS -o ConnectTimeout=5 ubuntu@$SERVER_IP 'exit 0'" \
         12 5
 }
 
@@ -108,17 +110,17 @@ test_docker() {
     print_test_header "TEST 2: Docker Services"
 
     retry_test "Docker Daemon läuft" \
-        "ssh -o StrictHostKeyChecking=no ubuntu@$SERVER_IP 'docker info'" \
+        "ssh $SSH_OPTS ubuntu@$SERVER_IP 'docker info'" \
         12 5
 
     echo ""
 
     # Wichtigste Container
-    local services=("db" "kong" "auth" "rest" "storage" "caddy" "portainer" "uptime-kuma" "backup")
+    local services=("db" "kong" "auth" "rest" "storage" "caddy" "portainer" "backup")
 
     for service in "${services[@]}"; do
         retry_test "Container '$service' läuft" \
-            "ssh -o StrictHostKeyChecking=no ubuntu@$SERVER_IP 'cd /opt/supabase && docker compose ps | grep -q \"$service.*running\"'" \
+            "ssh $SSH_OPTS ubuntu@$SERVER_IP 'docker ps --format \"{{.Names}} {{.Status}}\" | grep -q \"$service.*Up\"'" \
             24 5 || return 1
     done
 
@@ -129,17 +131,20 @@ test_docker() {
 test_dns() {
     print_test_header "TEST 3: DNS Auflösung"
 
-    # DNS TTL 300s = max 5 min
-    retry_test "DNS: $DOMAIN → $SERVER_IP" \
-        "dig +short $DOMAIN | grep -q '$SERVER_IP'" \
-        60 5
+    # Öffentliche DNS Server nutzen statt lokale Resolver (kein Cache-Problem)
+    local dns_servers=("1.1.1.1" "8.8.8.8" "9.9.9.9")
+    local dns_names=("Cloudflare" "Google" "Quad9")
 
-    retry_test "DNS: $PORTAINER_DOMAIN (CNAME)" \
-        "dig +short $PORTAINER_DOMAIN | grep -q '$DOMAIN\|$SERVER_IP'" \
-        60 5
+    # A Record prüfen über mehrere DNS Server
+    for i in "${!dns_servers[@]}"; do
+        retry_test "DNS: $DOMAIN → $SERVER_IP (${dns_names[$i]})" \
+            "dig +short @${dns_servers[$i]} $DOMAIN | grep -q '$SERVER_IP'" \
+            60 5
+    done
 
-    retry_test "DNS: $STATUS_DOMAIN (CNAME)" \
-        "dig +short $STATUS_DOMAIN | grep -q '$DOMAIN\|$SERVER_IP'" \
+    # CNAMEs prüfen über Cloudflare
+    retry_test "DNS: $PORTAINER_DOMAIN (CNAME via Cloudflare)" \
+        "dig +short @1.1.1.1 $PORTAINER_DOMAIN | grep -q '$DOMAIN\|$SERVER_IP'" \
         60 5
 
     echo ""
@@ -169,10 +174,6 @@ test_https() {
         "curl -sf --max-time 10 -o /dev/null https://$PORTAINER_DOMAIN" \
         36 5
 
-    retry_test "HTTPS: $STATUS_DOMAIN (mit SSL)" \
-        "curl -sf --max-time 10 -o /dev/null https://$STATUS_DOMAIN" \
-        36 5
-
     echo ""
     print_success "Alle HTTPS Endpoints erreichbar"
 }
@@ -188,10 +189,6 @@ test_apis() {
         "curl -sf -o /dev/null -w '%{http_code}' https://$PORTAINER_DOMAIN/ | grep -qE '^[2-3][0-9]{2}$'" \
         24 5
 
-    retry_test "Uptime Kuma" \
-        "curl -sf -o /dev/null https://$STATUS_DOMAIN/" \
-        24 5
-
     echo ""
     print_success "Alle APIs antworten"
 }
@@ -200,11 +197,11 @@ test_database() {
     print_test_header "TEST 7: PostgreSQL Database"
 
     retry_test "PostgreSQL antwortet" \
-        "ssh -o StrictHostKeyChecking=no ubuntu@$SERVER_IP 'cd /opt/supabase && docker compose exec -T db pg_isready -U postgres'" \
+        "ssh $SSH_OPTS ubuntu@$SERVER_IP 'docker exec supabase-db pg_isready -U postgres'" \
         24 5
 
     retry_test "Supabase Schema initialisiert" \
-        "ssh -o StrictHostKeyChecking=no ubuntu@$SERVER_IP 'cd /opt/supabase && docker compose exec -T db psql -U postgres -d postgres -c \"\dt auth.*\" | grep -q tables'" \
+        "ssh $SSH_OPTS ubuntu@$SERVER_IP 'docker exec supabase-db psql -U postgres -d postgres -c \"\dt auth.*\" | grep -q tables'" \
         36 5
 
     echo ""
@@ -215,7 +212,7 @@ test_caddy() {
     print_test_header "TEST 8: Caddy Reverse Proxy"
 
     retry_test "Caddy Container läuft" \
-        "ssh -o StrictHostKeyChecking=no ubuntu@$SERVER_IP 'docker ps | grep -q caddy'" \
+        "ssh $SSH_OPTS ubuntu@$SERVER_IP 'docker ps --format \"{{.Names}} {{.Status}}\" | grep -q \"caddy.*Up\"'" \
         24 5
 
     echo ""
@@ -266,7 +263,6 @@ main() {
     echo "Nächste Schritte:"
     echo "  • Supabase Studio:  https://$DOMAIN"
     echo "  • Portainer Setup:  https://$PORTAINER_DOMAIN"
-    echo "  • Uptime Kuma:      https://$STATUS_DOMAIN"
     echo ""
     exit 0
 }

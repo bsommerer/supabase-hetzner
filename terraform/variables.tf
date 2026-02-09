@@ -26,7 +26,7 @@ variable "ssh_public_key" {
 }
 
 variable "admin_ips" {
-  description = "Liste von IP-Adressen für Admin-Zugang (SSH, Portainer, Uptime Kuma)"
+  description = "Liste von IP-Adressen für Admin-Zugang (SSH, Portainer)"
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }

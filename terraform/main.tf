@@ -13,7 +13,6 @@
 # - Docker + Docker Compose
 # - Supabase (alle Services)
 # - Portainer (Container Management)
-# - Uptime Kuma (Monitoring)
 # - docker-volume-backup (Automatische Backups)
 #
 # Verwendung:

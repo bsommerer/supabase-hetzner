@@ -4,13 +4,11 @@
 # Caddy übernimmt SSL/TLS für alle Domains und routet zu den Services
 # - Automatische Let's Encrypt Zertifikate
 # - Optimiert für Supabase (WebSocket, große Uploads)
-# - Clean URLs für Portainer und Uptime Kuma
+# - Clean URL für Portainer
 # =============================================================================
 
 {
-	# Global options
 	email {$ACME_EMAIL}
-	auto_https on
 }
 
 # =============================================================================
@@ -82,26 +80,3 @@ portainer.{$DOMAIN} {
 	}
 }
 
-# =============================================================================
-# Uptime Kuma - Status & Monitoring
-# =============================================================================
-status.{$DOMAIN} {
-	reverse_proxy uptime-kuma:3001 {
-		header_up Host {host}
-		header_up X-Real-IP {remote_host}
-		header_up X-Forwarded-For {remote_host}
-		header_up X-Forwarded-Proto {scheme}
-
-		# WebSocket Support (wichtig für Uptime Kuma Live-Updates!)
-		header_up Connection {>Connection}
-		header_up Upgrade {>Upgrade}
-		flush_interval -1
-	}
-
-	log {
-		output file /var/log/caddy/status.log {
-			roll_size 10mb
-			roll_keep 5
-		}
-	}
-}

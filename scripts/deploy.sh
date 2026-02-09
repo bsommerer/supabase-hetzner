@@ -33,6 +33,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 TERRAFORM_DIR="$PROJECT_DIR/terraform"
 
+# SSH Optionen - kein Passwort, nur Key Auth
+SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no"
+
 # Farben für Output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -70,6 +73,52 @@ print_info() {
 }
 
 # =============================================================================
+# Deployment Status Detection
+# =============================================================================
+
+check_deployment_status() {
+    local server_ip="$1"
+
+    # Status Codes:
+    # 0 = Komplett deployed, nur Tests nötig
+    # 1 = Server läuft, Cloud-Init läuft noch
+    # 2 = Server existiert, aber nicht erreichbar (Problem)
+    # 3 = Kein Server deployed
+
+    # Prüfe ob Server in Terraform State existiert
+    if ! terraform -chdir="$TERRAFORM_DIR" state list 2>/dev/null | grep -q "hcloud_server.supabase"; then
+        echo "3" # Nichts deployed
+        return
+    fi
+
+    # Server existiert im State, hole IP
+    if [ -z "$server_ip" ]; then
+        echo "2" # Server existiert aber keine IP
+        return
+    fi
+
+    # Prüfe SSH Erreichbarkeit (kurzer Timeout)
+    # UserKnownHostsFile=/dev/null weil Server bei Redeployment neuen Host Key bekommt
+    if ! ssh $SSH_OPTS -o ConnectTimeout=3 -o BatchMode=yes -o LogLevel=ERROR \
+            "ubuntu@$server_ip" "exit 0" 2>/dev/null; then
+        echo "2" # Server nicht erreichbar
+        return
+    fi
+
+    # SSH erreichbar, prüfe Cloud-Init Status
+    local cloud_init_status=$(ssh $SSH_OPTS -o BatchMode=yes "ubuntu@$server_ip" \
+        "[ -f /var/lib/cloud/instance/boot-finished ] && echo 'done' || echo 'running'" 2>/dev/null)
+
+    if [ "$cloud_init_status" = "running" ]; then
+        echo "1" # Cloud-Init läuft noch
+        return
+    fi
+
+    # Alles fertig
+    echo "0"
+}
+
+# =============================================================================
 # Deployment-Überwachung
 # =============================================================================
 
@@ -81,10 +130,7 @@ wait_for_ssh() {
     print_info "Warte auf SSH-Verfügbarkeit ($server_ip)..."
 
     while [ $attempt -le $max_attempts ]; do
-        if ssh -o ConnectTimeout=5 \
-               -o StrictHostKeyChecking=no \
-               -o BatchMode=yes \
-               -o LogLevel=ERROR \
+        if ssh $SSH_OPTS -o ConnectTimeout=5 -o BatchMode=yes -o LogLevel=ERROR \
                "ubuntu@$server_ip" "exit 0" 2>/dev/null; then
             print_success "SSH ist verfügbar"
             return 0
@@ -98,28 +144,6 @@ wait_for_ssh() {
     echo ""
     print_error "SSH-Timeout nach $max_attempts Versuchen"
     return 1
-}
-
-stream_cloud_init_log() {
-    local server_ip="$1"
-
-    print_header "Cloud-Init Log (Live Stream)"
-    print_info "Streaming /var/log/cloud-init-output.log"
-    print_info "Dies kann 5-10 Minuten dauern (Docker Pull, Setup, etc.)"
-    echo ""
-
-    # SSH mit tail -f - folgt dem Log bis Cloud-Init fertig ist
-    # boot-finished wird von cloud-init erstellt wenn alles fertig ist
-    ssh -o StrictHostKeyChecking=no "ubuntu@$server_ip" \
-        'tail -f /var/log/cloud-init-output.log 2>/dev/null & TAIL_PID=$!;
-         while [ ! -f /var/lib/cloud/instance/boot-finished ]; do sleep 2; done;
-         sleep 5;
-         kill $TAIL_PID 2>/dev/null;
-         echo "";
-         echo "=== Cloud-Init abgeschlossen ===";
-         echo ""' || true
-
-    print_success "Cloud-Init Installation abgeschlossen"
 }
 
 run_deployment_tests() {
@@ -165,6 +189,7 @@ Optionen:
   ${GREEN}--list-backups${NC}      Zeigt verfügbare Backups an
   ${GREEN}--backup-now${NC}        Führt sofortiges Backup aus
   ${GREEN}--test-backup${NC}       Testet Backup/Restore Funktionalität lokal
+  ${GREEN}--test${NC}              Testet das aktuelle Deployment (SSH, Docker, DNS, HTTPS, APIs, DB)
   ${GREEN}--status${NC}            Zeigt Status der Infrastruktur
   ${GREEN}--ssh${NC}               Verbindet via SSH zum Server
   ${GREEN}--logs [SERVICE]${NC}    Zeigt Docker Logs (optional: spezifischer Service)
@@ -173,6 +198,7 @@ Optionen:
 Beispiele:
   ${CYAN}$0 --init --apply${NC}                    # Erstmaliges Deployment
   ${CYAN}$0 --apply --restore 2024-01-15${NC}      # Deployment mit Restore
+  ${CYAN}$0 --test${NC}                            # Deployment testen
   ${CYAN}$0 --backup-now${NC}                      # Manuelles Backup
   ${CYAN}$0 --status${NC}                          # Server Status anzeigen
   ${CYAN}$0 --logs kong${NC}                       # Kong Logs anzeigen
@@ -265,19 +291,109 @@ terraform_plan() {
 terraform_apply() {
     local restore_date="${1:-}"
 
-    print_header "Terraform Apply"
+    print_header "Smart Deployment"
     check_tfvars
     check_secrets
     cd "$TERRAFORM_DIR"
 
-    local apply_args=()
+    # Hole Server IP aus State (falls vorhanden)
+    local server_ip=$(terraform output -raw server_ip 2>/dev/null || echo "")
+    local domain=$(terraform output -raw supabase_url 2>/dev/null | sed 's|https://||')
+
+    # Prüfe Deployment-Status
+    local status=$(check_deployment_status "$server_ip")
+
+    case $status in
+        0)
+            # === Deployment komplett, nur Tests ===
+            print_success "Server bereits deployed und erreichbar!"
+            echo ""
+            print_info "Server IP: $server_ip"
+            print_info "Domain: $domain"
+            print_info "Status: Cloud-Init abgeschlossen ✓"
+            echo ""
+            print_info "Starte Deployment-Tests..."
+            echo ""
+
+            if run_deployment_tests "$server_ip" "$domain"; then
+                echo ""
+                echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
+                echo -e "${GREEN}║  ✓  DEPLOYMENT VERIFIZIERT                                 ║${NC}"
+                echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
+            else
+                echo ""
+                print_warning "Tests fehlgeschlagen - Services möglicherweise noch nicht bereit"
+                echo ""
+                print_info "Debug-Befehle:"
+                echo "  $0 --ssh              # SSH zum Server"
+                echo "  $0 --logs             # Logs anzeigen"
+                echo "  $0 --status           # Status prüfen"
+            fi
+            echo ""
+            show_outputs
+            return 0
+            ;;
+
+        1)
+            # === Server läuft, Cloud-Init noch aktiv ===
+            print_info "Server läuft bereits, Cloud-Init ist noch aktiv"
+            echo ""
+            print_info "Server IP: $server_ip"
+            print_info "Domain: $domain"
+            echo ""
+
+            if run_deployment_tests "$server_ip" "$domain"; then
+                echo ""
+                echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
+                echo -e "${GREEN}║  🎉  DEPLOYMENT ERFOLGREICH                                ║${NC}"
+                echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
+            else
+                echo ""
+                print_warning "Tests fehlgeschlagen - bitte manuell prüfen"
+            fi
+            echo ""
+            show_outputs
+            return 0
+            ;;
+
+        2)
+            # === Server existiert aber Problem ===
+            print_warning "Server existiert in Terraform State, ist aber nicht erreichbar"
+            echo ""
+            if [ -n "$server_ip" ]; then
+                print_info "Server IP: $server_ip"
+            fi
+            echo ""
+            print_info "Mögliche Ursachen:"
+            echo "  • Server bootet noch (warte 1-2 Minuten)"
+            echo "  • Firewall blockiert SSH"
+            echo "  • Server wurde manuell gelöscht aber State nicht aktualisiert"
+            echo ""
+            read -p "Terraform apply erneut ausführen? (y/n): " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                print_info "Abgebrochen. Nutze '$0 --destroy' um State zu bereinigen."
+                return 1
+            fi
+            ;;
+
+        3)
+            # === Nichts deployed ===
+            print_info "Keine Infrastruktur gefunden, starte neues Deployment"
+            echo ""
+            ;;
+    esac
+
+    # Terraform apply ausführen (bei Status 2 oder 3)
+    local apply_args=("-auto-approve")
     if [ -n "$restore_date" ]; then
         print_info "Restore von Backup: $restore_date"
         apply_args+=("-var=restore_from_backup=true")
         apply_args+=("-var=backup_date=$restore_date")
     fi
 
-    # Terraform apply ausführen
+    print_info "Führe terraform apply aus..."
+    echo ""
     terraform apply "${apply_args[@]}"
     local apply_result=$?
 
@@ -290,8 +406,8 @@ terraform_apply() {
     print_success "Terraform apply abgeschlossen!"
 
     # Server IP und Domain aus Outputs holen
-    local server_ip=$(terraform output -raw server_ip 2>/dev/null || echo "")
-    local domain=$(terraform output -raw supabase_url 2>/dev/null | sed 's|https://||')
+    server_ip=$(terraform output -raw server_ip 2>/dev/null || echo "")
+    domain=$(terraform output -raw supabase_url 2>/dev/null | sed 's|https://||')
 
     if [ -z "$server_ip" ]; then
         print_error "Konnte Server IP nicht ermitteln"
@@ -312,12 +428,7 @@ terraform_apply() {
 
     echo ""
 
-    # === PHASE 2: Cloud-Init Log streamen ===
-    stream_cloud_init_log "$server_ip"
-
-    echo ""
-
-    # === PHASE 3: Automatische Tests ===
+    # === PHASE 2: Automatische Tests ===
     if run_deployment_tests "$server_ip" "$domain"; then
         echo ""
         echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
@@ -373,12 +484,10 @@ show_outputs() {
         local server_ip=$(terraform output -raw server_ip 2>/dev/null || echo "N/A")
         local supabase_url=$(terraform output -raw supabase_url 2>/dev/null || echo "N/A")
         local portainer_url=$(terraform output -raw portainer_url 2>/dev/null || echo "N/A")
-        local uptime_kuma_url=$(terraform output -raw uptime_kuma_url 2>/dev/null || echo "N/A")
 
         echo "  Server IP:     $server_ip"
         echo "  Supabase:      $supabase_url"
         echo "  Portainer:     $portainer_url"
-        echo "  Uptime Kuma:   $uptime_kuma_url"
         echo ""
         echo "  SSH:           ssh ubuntu@$server_ip"
         echo ""
@@ -406,8 +515,8 @@ show_status() {
         echo -e "${CYAN}│  Docker Services                                            │${NC}"
         echo -e "${CYAN}└─────────────────────────────────────────────────────────────┘${NC}"
         echo ""
-        ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "ubuntu@$server_ip" \
-            "cd /opt/supabase && docker compose ps --format 'table {{.Name}}\t{{.Status}}\t{{.Ports}}'" 2>/dev/null || \
+        ssh $SSH_OPTS -o ConnectTimeout=5 -o BatchMode=yes "ubuntu@$server_ip" \
+            "docker ps --format 'table {{.Names}}\t{{.Status}}'" 2>/dev/null || \
             print_warning "Konnte nicht zum Server verbinden"
     fi
 }
@@ -423,7 +532,7 @@ connect_ssh() {
     fi
 
     print_info "Verbinde zu ubuntu@$server_ip..."
-    ssh "ubuntu@$server_ip"
+    ssh $SSH_OPTS "ubuntu@$server_ip"
 }
 
 show_logs() {
@@ -439,10 +548,10 @@ show_logs() {
 
     if [ -n "$service" ]; then
         print_info "Zeige Logs für Service: $service"
-        ssh "ubuntu@$server_ip" "cd /opt/supabase && docker compose logs -f --tail=100 $service"
+        ssh $SSH_OPTS "ubuntu@$server_ip" "cd /opt/supabase && docker compose logs -f --tail=100 $service"
     else
         print_info "Zeige alle Logs"
-        ssh "ubuntu@$server_ip" "cd /opt/supabase && docker compose logs -f --tail=50"
+        ssh $SSH_OPTS "ubuntu@$server_ip" "cd /opt/supabase && docker compose logs -f --tail=50"
     fi
 }
 
@@ -458,7 +567,7 @@ backup_now() {
     fi
 
     print_info "Starte Backup auf $server_ip..."
-    ssh "ubuntu@$server_ip" "docker exec backup /bin/sh -c '/usr/local/bin/backup'"
+    ssh $SSH_OPTS "ubuntu@$server_ip" "docker exec backup /usr/bin/backup"
     print_success "Backup gestartet"
 
     echo ""
@@ -508,6 +617,7 @@ RESTORE_DATE=""
 LIST_BACKUPS=false
 BACKUP_NOW=false
 TEST_BACKUP=false
+TEST=false
 STATUS=false
 SSH=false
 LOGS=false
@@ -547,6 +657,10 @@ while [[ $# -gt 0 ]]; do
             TEST_BACKUP=true
             shift
             ;;
+        --test)
+            TEST=true
+            shift
+            ;;
         --status)
             STATUS=true
             shift
@@ -579,7 +693,7 @@ done
 # =============================================================================
 
 # Mindestens eine Option erforderlich
-if ! $INIT && ! $PLAN && ! $APPLY && ! $DESTROY && ! $LIST_BACKUPS && ! $BACKUP_NOW && ! $TEST_BACKUP && ! $STATUS && ! $SSH && ! $LOGS; then
+if ! $INIT && ! $PLAN && ! $APPLY && ! $DESTROY && ! $LIST_BACKUPS && ! $BACKUP_NOW && ! $TEST_BACKUP && ! $TEST && ! $STATUS && ! $SSH && ! $LOGS; then
     usage
 fi
 
@@ -601,6 +715,19 @@ fi
 
 if $APPLY; then
     terraform_apply "$RESTORE_DATE"
+fi
+
+if $TEST; then
+    cd "$TERRAFORM_DIR"
+    local_server_ip=$(terraform output -raw server_ip 2>/dev/null || echo "")
+    local_domain=$(terraform output -raw supabase_url 2>/dev/null | sed 's|https://||')
+
+    if [ -z "$local_server_ip" ]; then
+        print_error "Keine Server IP gefunden - ist Infrastruktur deployed?"
+        exit 1
+    fi
+
+    run_deployment_tests "$local_server_ip" "$local_domain"
 fi
 
 if $LIST_BACKUPS; then

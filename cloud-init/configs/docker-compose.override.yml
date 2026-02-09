@@ -4,11 +4,31 @@
 # Diese Datei erweitert die Standard Supabase docker-compose.yml um:
 # - Caddy (Reverse Proxy & SSL Termination)
 # - Portainer (Container Management)
-# - Uptime Kuma (Monitoring)
 # - docker-volume-backup (Automatische Backups)
 # =============================================================================
 
 services:
+  # ---------------------------------------------------------------------------
+  # Storage Override - S3/R2 Backend statt lokales Dateisystem
+  # ---------------------------------------------------------------------------
+  # Die Standard docker-compose.yml setzt STORAGE_BACKEND=file hardcoded.
+  # Dieser Override aktiviert S3 (Cloudflare R2) als Storage-Backend.
+  # ---------------------------------------------------------------------------
+  storage:
+    environment:
+      STORAGE_BACKEND: s3
+      GLOBAL_S3_BUCKET: "${S3_STORAGE_BUCKET}"
+      GLOBAL_S3_ENDPOINT: "${S3_ENDPOINT}"
+      GLOBAL_S3_PROTOCOL: https
+      GLOBAL_S3_FORCE_PATH_STYLE: "true"
+      AWS_ACCESS_KEY_ID: "${S3_ACCESS_KEY}"
+      AWS_SECRET_ACCESS_KEY: "${S3_SECRET_KEY}"
+      AWS_DEFAULT_REGION: "${S3_REGION}"
+      REGION: "${S3_REGION}"
+      # R2 unterstuetzt kein S3 Object Tagging (x-amz-tagging → 501 NotImplemented)
+      TUS_ALLOW_S3_TAGS: "false"
+    volumes: []
+
   # ---------------------------------------------------------------------------
   # Database Override - Backup Labels hinzufügen
   # ---------------------------------------------------------------------------
@@ -32,7 +52,7 @@ services:
       - "443:443"
       - "443:443/udp"
     environment:
-      DOMAIN: "${SITE_URL#https://}"
+      DOMAIN: "${ACME_DOMAIN}"
       ACME_EMAIL: "${ACME_EMAIL}"
     volumes:
       - /opt/supabase/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
@@ -51,7 +71,7 @@ services:
     networks:
       - default
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80"]
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -65,25 +85,11 @@ services:
     container_name: portainer
     image: portainer/portainer-ce:latest
     restart: unless-stopped
+    command: --admin-password-file /tmp/portainer_password
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
-    # Kein externer Port - Caddy proxied zu :9443
-    labels:
-      - "docker-volume-backup.stop-during-backup=false"
-    networks:
-      - default
-
-  # ---------------------------------------------------------------------------
-  # Uptime Kuma - Monitoring
-  # ---------------------------------------------------------------------------
-  uptime-kuma:
-    container_name: uptime-kuma
-    image: louislam/uptime-kuma:latest
-    restart: unless-stopped
-    volumes:
-      - uptime_kuma_data:/app/data
-    # Kein externer Port - Caddy proxied zu :3001
+      - /opt/supabase/portainer_password:/tmp/portainer_password:ro
     labels:
       - "docker-volume-backup.stop-during-backup=false"
     networks:
@@ -112,7 +118,7 @@ services:
       GPG_PASSPHRASE: "${BACKUP_ENCRYPTION_KEY:-}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - db-data:/backup/db-data:ro
+      - ./volumes/db/data:/backup/db-data:ro
       - /opt/supabase/.env:/backup/config/.env:ro
     networks:
       - default
@@ -122,8 +128,6 @@ services:
 # =============================================================================
 volumes:
   portainer_data:
-    driver: local
-  uptime_kuma_data:
     driver: local
   caddy_data:
     driver: local

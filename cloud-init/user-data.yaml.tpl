@@ -1,19 +1,21 @@
 #cloud-config
-# =============================================================================
 # Supabase Self-Hosting Cloud-init Konfiguration
-# =============================================================================
-# Diese Datei wird von Terraform gerendert und konfiguriert einen Ubuntu Server
-# mit Supabase, Portainer, Uptime Kuma und automatischen Backups.
-#
-# Config-Dateien werden aus cloud-init/configs/ via Terraform eingebunden.
-# =============================================================================
+
+users:
+  - default
+  - name: ubuntu
+    groups: [sudo, docker]
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ${ssh_public_key}
 
 package_update: true
 package_upgrade: true
 
 packages:
   - docker.io
-  - docker-compose-plugin
+  - docker-compose-v2
   - git
   - curl
   - jq
@@ -52,30 +54,30 @@ write_files:
   # ---------------------------------------------------------------------------
   - path: /opt/supabase/.env
     permissions: '0600'
-    content: |
-${indent(6, supabase_env)}
+    encoding: gz+b64
+    content: ${supabase_env}
 
   # ---------------------------------------------------------------------------
   # Docker Compose Override (aus configs/docker-compose.override.yml)
   # ---------------------------------------------------------------------------
   - path: /opt/supabase/docker-compose.override.yml
-    content: |
-${indent(6, docker_compose_override)}
+    encoding: gz+b64
+    content: ${docker_compose_override}
 
   # ---------------------------------------------------------------------------
   # Caddyfile (aus configs/Caddyfile)
   # ---------------------------------------------------------------------------
   - path: /opt/supabase/caddy/Caddyfile
-    content: |
-${indent(6, caddyfile)}
+    encoding: gz+b64
+    content: ${caddyfile}
 
   # ---------------------------------------------------------------------------
   # Restore Script (aus configs/restore.sh)
   # ---------------------------------------------------------------------------
   - path: /opt/supabase/scripts/restore.sh
     permissions: '0755'
-    content: |
-${indent(6, restore_script)}
+    encoding: gz+b64
+    content: ${restore_script}
 
 # =============================================================================
 # Ausführungsbefehle
@@ -83,35 +85,15 @@ ${indent(6, restore_script)}
 
 runcmd:
   # ---------------------------------------------------------------------------
-  # Setup Logging & Error Handling
+  # Setup Logging
   # ---------------------------------------------------------------------------
-  - |
-    exec > >(tee -a /var/log/supabase-setup.log) 2>&1
-    echo "=== Supabase Setup started at $(date -Iseconds) ==="
-
-  - |
-    set -euo pipefail
-    trap 'echo "ERROR at line $LINENO, exit code: $?" | tee -a /var/log/supabase-setup.log' ERR
+  - echo "=== Supabase Setup started at $(date -Iseconds) ===" | tee -a /var/log/supabase-setup.log
 
   # ---------------------------------------------------------------------------
-  # Docker Setup mit Retry
+  # Docker Setup
   # ---------------------------------------------------------------------------
-  - |
-    echo "Enabling Docker..."
-    systemctl enable docker
-    systemctl start docker
-    for i in {1..30}; do
-      docker info &>/dev/null && break
-      echo "Waiting for Docker... ($i/30)"
-      sleep 2
-    done
-    if ! docker info &>/dev/null; then
-      echo "ERROR: Docker did not start!"
-      exit 1
-    fi
-    echo "Docker ready."
-
-  # Docker Gruppe für ubuntu User
+  - systemctl enable docker
+  - systemctl start docker
   - usermod -aG docker ubuntu
 
   # ---------------------------------------------------------------------------
@@ -123,41 +105,20 @@ runcmd:
   - mkdir -p /opt/supabase/caddy
 
   # ---------------------------------------------------------------------------
-  # AWS CLI für S3 Backups installieren (mit Retry)
+  # AWS CLI für S3 Backups installieren
   # ---------------------------------------------------------------------------
   - |
-    echo "Installing AWS CLI..."
-    for i in {1..3}; do
-      curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip" && break
-      echo "AWS CLI download failed, retry $i/3..."
-      sleep 5
-    done
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
     unzip -q /tmp/awscliv2.zip -d /tmp/
     /tmp/aws/install
     rm -rf /tmp/aws /tmp/awscliv2.zip
-    echo "AWS CLI installed."
 
   # ---------------------------------------------------------------------------
-  # Supabase Docker Setup klonen (mit Retry)
+  # Supabase Docker Setup klonen
   # ---------------------------------------------------------------------------
-  - |
-    echo "Cloning Supabase repository..."
-    for i in {1..3}; do
-      git clone --depth 1 https://github.com/supabase/supabase /tmp/supabase-repo && break
-      echo "Git clone failed, retry $i/3..."
-      rm -rf /tmp/supabase-repo
-      sleep 10
-    done
-    if [ ! -d "/tmp/supabase-repo" ]; then
-      echo "ERROR: Failed to clone Supabase repository!"
-      exit 1
-    fi
-
-  # docker-compose.yml und volumes (inkl. Standard kong.yml) kopieren
+  - git clone --depth 1 https://github.com/supabase/supabase /tmp/supabase-repo
   - cp /tmp/supabase-repo/docker/docker-compose.yml /opt/supabase/
   - cp -r /tmp/supabase-repo/docker/volumes /opt/supabase/
-
-  # Aufräumen
   - rm -rf /tmp/supabase-repo
 
   # ---------------------------------------------------------------------------
@@ -171,7 +132,7 @@ runcmd:
     ufw allow 80/tcp     # HTTP (Let's Encrypt ACME)
     ufw allow 443/tcp    # HTTPS (Caddy - alle Services)
     ufw allow 443/udp    # HTTP/3 (QUIC)
-    # Portainer und Uptime Kuma laufen über Caddy (Port 443)
+    # Portainer läuft über Caddy (Port 443)
     ufw --force enable
     echo "Firewall configured."
 
@@ -182,44 +143,21 @@ runcmd:
   - systemctl start fail2ban
 
   # ---------------------------------------------------------------------------
-  # Docker Images pullen (mit Retry)
+  # Portainer Admin-Passwort setzen (aus .env DASHBOARD_PASSWORD)
   # ---------------------------------------------------------------------------
   - |
-    echo "Pulling Docker images..."
     cd /opt/supabase
-    for i in {1..3}; do
-      docker compose pull && break
-      echo "Docker pull failed, retry $i/3..."
-      sleep 15
-    done
+    grep -oP '^DASHBOARD_PASSWORD=\K.*' .env > /opt/supabase/portainer_password
+    chmod 600 /opt/supabase/portainer_password
 
   # ---------------------------------------------------------------------------
-  # Supabase starten
+  # Docker Images pullen und Supabase starten
   # ---------------------------------------------------------------------------
   - |
-    echo "Starting Supabase services..."
     cd /opt/supabase
+    chown ubuntu:ubuntu /opt/supabase/.env
+    docker compose pull
     docker compose up -d
-
-  # ---------------------------------------------------------------------------
-  # Warten auf Services + Health Check
-  # ---------------------------------------------------------------------------
-  - |
-    echo "Waiting for services to be healthy..."
-    sleep 30
-    cd /opt/supabase
-    for i in {1..30}; do
-      if docker compose ps | grep -q "healthy"; then
-        echo "Services are starting up..."
-      fi
-      # Check if db is ready
-      if docker compose exec -T db pg_isready -U postgres &>/dev/null; then
-        echo "Database is ready."
-        break
-      fi
-      echo "Waiting for database... ($i/30)"
-      sleep 5
-    done
 
   # ---------------------------------------------------------------------------
   # Optional: Restore von Backup
@@ -240,7 +178,6 @@ runcmd:
     echo "URLs (alle über Caddy mit SSL):"
     echo "  Supabase:    https://${domain}"
     echo "  Portainer:   https://portainer.${domain}"
-    echo "  Uptime Kuma: https://status.${domain}"
     echo ""
     echo "Check status: docker compose ps"
     echo "Check logs: /var/log/supabase-setup.log"
