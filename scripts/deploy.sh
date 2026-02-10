@@ -170,6 +170,43 @@ run_deployment_tests() {
     fi
 }
 
+run_remote_restore() {
+    local server_ip="$1"
+    local restore_date="$2"
+
+    print_header "Restore auf laufendem Server"
+
+    echo -e "${YELLOW}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║  WARNUNG: Dies überschreibt die aktuelle Datenbank!        ║${NC}"
+    echo -e "${YELLOW}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    print_info "Server: $server_ip"
+    print_info "Backup-Datum: $restore_date"
+    echo ""
+
+    read -p "Restore durchführen? (yes/no): " confirm
+    if [ "$confirm" != "yes" ]; then
+        print_info "Restore abgebrochen"
+        return 0
+    fi
+
+    echo ""
+    print_info "Starte Restore via SSH..."
+    echo ""
+
+    ssh $SSH_OPTS "ubuntu@$server_ip" \
+        "/opt/supabase/scripts/restore.sh $restore_date"
+    local restore_result=$?
+
+    echo ""
+    if [ $restore_result -eq 0 ]; then
+        print_success "Restore abgeschlossen"
+    else
+        print_error "Restore fehlgeschlagen (Exit Code: $restore_result)"
+        return 1
+    fi
+}
+
 # =============================================================================
 # Verwendung
 # =============================================================================
@@ -185,7 +222,7 @@ Optionen:
   ${GREEN}--plan${NC}              Zeigt Terraform Plan an
   ${GREEN}--apply${NC}             Führt terraform apply aus
   ${GREEN}--destroy${NC}           Zerstört die Infrastruktur
-  ${GREEN}--restore DATE${NC}      Stellt Backup vom Datum wieder her (Format: YYYY-MM-DD)
+  ${GREEN}--restore [DATE]${NC}     Stellt Backup wieder her (ohne Datum: interaktive Auswahl)
   ${GREEN}--list-backups${NC}      Zeigt verfügbare Backups an
   ${GREEN}--backup-now${NC}        Führt sofortiges Backup aus
   ${GREEN}--test-backup${NC}       Testet Backup/Restore Funktionalität lokal
@@ -197,7 +234,9 @@ Optionen:
 
 Beispiele:
   ${CYAN}$0 --init --apply${NC}                    # Erstmaliges Deployment
-  ${CYAN}$0 --apply --restore 2024-01-15${NC}      # Deployment mit Restore
+  ${CYAN}$0 --restore${NC}                          # Backup interaktiv auswählen & restore
+  ${CYAN}$0 --restore 2024-01-15${NC}              # Restore von spezifischem Datum
+  ${CYAN}$0 --apply --restore${NC}                  # Neues Deployment mit Restore
   ${CYAN}$0 --test${NC}                            # Deployment testen
   ${CYAN}$0 --backup-now${NC}                      # Manuelles Backup
   ${CYAN}$0 --status${NC}                          # Server Status anzeigen
@@ -304,14 +343,19 @@ terraform_apply() {
     local status=$(check_deployment_status "$server_ip")
 
     case $status in
-        0)
-            # === Deployment komplett, nur Tests ===
+        0|1)
+            # === Server läuft bereits ===
             print_success "Server bereits deployed und erreichbar!"
             echo ""
             print_info "Server IP: $server_ip"
             print_info "Domain: $domain"
-            print_info "Status: Cloud-Init abgeschlossen ✓"
             echo ""
+
+            # Restore auf laufendem Server via SSH
+            if [ -n "$restore_date" ]; then
+                run_remote_restore "$server_ip" "$restore_date"
+            fi
+
             print_info "Starte Deployment-Tests..."
             echo ""
 
@@ -322,34 +366,12 @@ terraform_apply() {
                 echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
             else
                 echo ""
-                print_warning "Tests fehlgeschlagen - Services möglicherweise noch nicht bereit"
+                print_warning "Tests fehlgeschlagen - bitte manuell prüfen"
                 echo ""
                 print_info "Debug-Befehle:"
                 echo "  $0 --ssh              # SSH zum Server"
                 echo "  $0 --logs             # Logs anzeigen"
                 echo "  $0 --status           # Status prüfen"
-            fi
-            echo ""
-            show_outputs
-            return 0
-            ;;
-
-        1)
-            # === Server läuft, Cloud-Init noch aktiv ===
-            print_info "Server läuft bereits, Cloud-Init ist noch aktiv"
-            echo ""
-            print_info "Server IP: $server_ip"
-            print_info "Domain: $domain"
-            echo ""
-
-            if run_deployment_tests "$server_ip" "$domain"; then
-                echo ""
-                echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
-                echo -e "${GREEN}║  🎉  DEPLOYMENT ERFOLGREICH                                ║${NC}"
-                echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
-            else
-                echo ""
-                print_warning "Tests fehlgeschlagen - bitte manuell prüfen"
             fi
             echo ""
             show_outputs
@@ -574,35 +596,84 @@ backup_now() {
     print_info "Prüfe Backup-Status mit: $0 --logs backup"
 }
 
-list_backups() {
-    print_header "Verfügbare Backups"
-
+load_s3_credentials() {
     check_tfvars
-
-    # S3 Credentials aus terraform.tfvars laden
     local tfvars="$TERRAFORM_DIR/terraform.tfvars"
-    local s3_endpoint=$(grep 's3_endpoint' "$tfvars" | sed 's/.*=.*"\(.*\)"/\1/' | tr -d ' ')
-    local s3_access_key=$(grep 's3_access_key' "$tfvars" | sed 's/.*=.*"\(.*\)"/\1/' | tr -d ' ')
-    local s3_secret_key=$(grep 's3_secret_key' "$tfvars" | sed 's/.*=.*"\(.*\)"/\1/' | tr -d ' ')
-    local s3_backup_bucket=$(grep 's3_backup_bucket' "$tfvars" | sed 's/.*=.*"\(.*\)"/\1/' | tr -d ' ')
+    S3_ENDPOINT=$(grep 's3_endpoint' "$tfvars" | sed 's/.*=.*"\(.*\)"/\1/' | tr -d ' ')
+    S3_ACCESS_KEY=$(grep 's3_access_key' "$tfvars" | sed 's/.*=.*"\(.*\)"/\1/' | tr -d ' ')
+    S3_SECRET_KEY=$(grep 's3_secret_key' "$tfvars" | sed 's/.*=.*"\(.*\)"/\1/' | tr -d ' ')
+    S3_BACKUP_BUCKET=$(grep 's3_backup_bucket' "$tfvars" | sed 's/.*=.*"\(.*\)"/\1/' | tr -d ' ')
 
-    if [ -z "$s3_endpoint" ] || [ -z "$s3_access_key" ] || [ -z "$s3_backup_bucket" ]; then
+    if [ -z "$S3_ENDPOINT" ] || [ -z "$S3_ACCESS_KEY" ] || [ -z "$S3_BACKUP_BUCKET" ]; then
         print_error "S3 Credentials nicht vollständig in terraform.tfvars"
         exit 1
     fi
+}
 
-    print_info "Bucket: s3://$s3_backup_bucket/supabase/"
+fetch_backup_list() {
+    docker run --rm \
+        -e AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY" \
+        -e AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY" \
+        amazon/aws-cli \
+        --endpoint-url "$S3_ENDPOINT" \
+        s3 ls "s3://$S3_BACKUP_BUCKET/supabase/" \
+        --human-readable 2>/dev/null | grep -E "backup-" | tail -20
+}
+
+list_backups() {
+    print_header "Verfügbare Backups"
+    load_s3_credentials
+    print_info "Bucket: s3://$S3_BACKUP_BUCKET/supabase/"
+    echo ""
+    fetch_backup_list || print_warning "Keine Backups gefunden oder S3 nicht erreichbar"
+}
+
+select_backup() {
+    print_header "Backup auswählen"
+    load_s3_credentials
+    print_info "Lade Backups von s3://$S3_BACKUP_BUCKET/supabase/ ..."
     echo ""
 
-    # Liste Backups via Docker (aws-cli)
-    docker run --rm \
-        -e AWS_ACCESS_KEY_ID="$s3_access_key" \
-        -e AWS_SECRET_ACCESS_KEY="$s3_secret_key" \
-        amazon/aws-cli \
-        --endpoint-url "$s3_endpoint" \
-        s3 ls "s3://$s3_backup_bucket/supabase/" \
-        --human-readable 2>/dev/null | grep -E "backup-" | tail -20 || \
-        print_warning "Keine Backups gefunden oder S3 nicht erreichbar"
+    local backup_lines
+    backup_lines=$(fetch_backup_list)
+
+    if [ -z "$backup_lines" ]; then
+        print_error "Keine Backups gefunden"
+        exit 1
+    fi
+
+    # Backup-Dateinamen extrahieren und nummeriert anzeigen (neueste zuerst)
+    local -a backup_files
+    while IFS= read -r line; do
+        local filename=$(echo "$line" | awk '{print $NF}')
+        backup_files+=("$filename")
+    done <<< "$backup_lines"
+
+    # Umkehren: neueste zuerst
+    local -a reversed
+    for (( i=${#backup_files[@]}-1; i>=0; i-- )); do
+        reversed+=("${backup_files[$i]}")
+    done
+
+    for i in "${!reversed[@]}"; do
+        local num=$((i + 1))
+        # Datum aus Dateiname extrahieren (backup-YYYY-MM-DDTHH-MM-SS.tar.gz*)
+        local display="${reversed[$i]}"
+        echo -e "  ${GREEN}[$num]${NC} $display"
+    done
+
+    echo ""
+    read -p "Backup Nummer wählen (1-${#reversed[@]}): " choice
+
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#reversed[@]}" ]; then
+        print_error "Ungültige Auswahl: $choice"
+        exit 1
+    fi
+
+    local selected="${reversed[$((choice - 1))]}"
+    # Datum aus Dateiname extrahieren (backup-YYYY-MM-DD...)
+    RESTORE_DATE=$(echo "$selected" | grep -oP '\d{4}-\d{2}-\d{2}')
+    print_success "Gewählt: $selected (Datum: $RESTORE_DATE)"
 }
 
 # =============================================================================
@@ -642,8 +713,13 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --restore)
-            RESTORE_DATE="$2"
-            shift 2
+            if [[ $# -gt 1 && ! "$2" =~ ^-- ]]; then
+                RESTORE_DATE="$2"
+                shift 2
+            else
+                RESTORE_DATE="__select__"
+                shift
+            fi
             ;;
         --list-backups)
             LIST_BACKUPS=true
@@ -693,7 +769,10 @@ done
 # =============================================================================
 
 # Mindestens eine Option erforderlich
-if ! $INIT && ! $PLAN && ! $APPLY && ! $DESTROY && ! $LIST_BACKUPS && ! $BACKUP_NOW && ! $TEST_BACKUP && ! $TEST && ! $STATUS && ! $SSH && ! $LOGS; then
+RESTORE=false
+[ -n "$RESTORE_DATE" ] && RESTORE=true
+
+if ! $INIT && ! $PLAN && ! $APPLY && ! $DESTROY && ! $RESTORE && ! $LIST_BACKUPS && ! $BACKUP_NOW && ! $TEST_BACKUP && ! $TEST && ! $STATUS && ! $SSH && ! $LOGS; then
     usage
 fi
 
@@ -714,7 +793,27 @@ if $DESTROY; then
 fi
 
 if $APPLY; then
+    if [ "$RESTORE_DATE" = "__select__" ]; then
+        select_backup
+    fi
     terraform_apply "$RESTORE_DATE"
+fi
+
+# Restore ohne --apply: direkt auf laufendem Server
+if $RESTORE && ! $APPLY; then
+    if [ "$RESTORE_DATE" = "__select__" ]; then
+        select_backup
+    fi
+
+    cd "$TERRAFORM_DIR"
+    restore_server_ip=$(terraform output -raw server_ip 2>/dev/null || echo "")
+
+    if [ -z "$restore_server_ip" ]; then
+        print_error "Keine Server IP gefunden - ist Infrastruktur deployed?"
+        exit 1
+    fi
+
+    run_remote_restore "$restore_server_ip" "$RESTORE_DATE"
 fi
 
 if $TEST; then

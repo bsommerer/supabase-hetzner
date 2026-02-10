@@ -26,15 +26,19 @@ NC='\033[0m'
 SUPABASE_DIR="/opt/supabase"
 RESTORE_DIR="/tmp/supabase-restore"
 
-# Lade Umgebungsvariablen
-if [ -f "$SUPABASE_DIR/.env" ]; then
-    set -a
-    source "$SUPABASE_DIR/.env"
-    set +a
-else
+# Lade nur benötigte Variablen aus .env (source ist unsicher bei Sonderzeichen)
+if [ ! -f "$SUPABASE_DIR/.env" ]; then
     echo -e "${RED}ERROR: $SUPABASE_DIR/.env nicht gefunden${NC}"
     exit 1
 fi
+
+get_env() { grep "^$1=" "$SUPABASE_DIR/.env" | cut -d'=' -f2-; }
+
+S3_ENDPOINT=$(get_env S3_ENDPOINT)
+S3_BACKUP_BUCKET=$(get_env S3_BACKUP_BUCKET)
+BACKUP_ENCRYPTION_KEY=$(get_env BACKUP_ENCRYPTION_KEY)
+export AWS_ACCESS_KEY_ID=$(get_env S3_ACCESS_KEY)
+export AWS_SECRET_ACCESS_KEY=$(get_env S3_SECRET_KEY)
 
 # =============================================================================
 # Hilfsfunktionen
@@ -149,6 +153,53 @@ start_database() {
     return 1
 }
 
+clean_database() {
+    echo "Bereinige bestehende Datenbank..."
+    cd "$SUPABASE_DIR"
+
+    # Terminiere alle anderen Verbindungen
+    docker compose exec -T db psql -U postgres -c \
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid <> pg_backend_pid();" \
+        >/dev/null 2>&1 || true
+
+    # Drop alle Nicht-Template-Datenbanken außer postgres
+    local databases
+    databases=$(docker compose exec -T db psql -U postgres -t -A -c \
+        "SELECT datname FROM pg_database WHERE datistemplate = false AND datname != 'postgres';" 2>/dev/null)
+
+    for db in $databases; do
+        [ -z "$db" ] && continue
+        echo "  Drop Database: $db"
+        docker compose exec -T db psql -U postgres -c "DROP DATABASE IF EXISTS \"$db\";" 2>/dev/null || true
+    done
+
+    # Drop alle Nicht-System-Schemas in postgres
+    docker compose exec -T db psql -U postgres -c "
+        DO \$\$
+        DECLARE r RECORD;
+        BEGIN
+            FOR r IN (SELECT nspname FROM pg_namespace
+                      WHERE nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+                      AND nspname NOT LIKE 'pg_%')
+            LOOP
+                EXECUTE 'DROP SCHEMA IF EXISTS ' || quote_ident(r.nspname) || ' CASCADE';
+            END LOOP;
+        END \$\$;
+    " 2>/dev/null || true
+
+    # Drop alle Nicht-System-Rollen
+    local roles
+    roles=$(docker compose exec -T db psql -U postgres -t -A -c \
+        "SELECT rolname FROM pg_roles WHERE rolname NOT LIKE 'pg_%' AND rolname != 'postgres';" 2>/dev/null)
+
+    for role in $roles; do
+        [ -z "$role" ] && continue
+        docker compose exec -T db psql -U postgres -c "DROP ROLE IF EXISTS \"$role\";" 2>/dev/null || true
+    done
+
+    print_success "Datenbank bereinigt"
+}
+
 restore_database() {
     local dump_file=$1
 
@@ -157,9 +208,27 @@ restore_database() {
         return 1
     fi
 
+    clean_database
+
     echo "Stelle Datenbank wieder her..."
     cd "$SUPABASE_DIR"
-    docker compose exec -T db psql -U postgres < "$dump_file"
+    local errors
+    errors=$(docker compose exec -T db psql -U postgres < "$dump_file" 2>&1 | \
+        grep -iE "^(ERROR|FATAL)" | \
+        grep -v "already exists" | \
+        grep -v "reserved role" | \
+        grep -v "must be superuser" | \
+        grep -v "permission denied for schema _analytics" | \
+        grep -v "permission denied for schema _supavisor" | \
+        grep -v "permission denied for database _supabase" | \
+        grep -v "must be owner of" | \
+        grep -v "permission denied for table" | \
+        grep -v "permission denied to set parameter" || true)
+
+    if [ -n "$errors" ]; then
+        print_warning "Fehler beim Restore (möglicherweise unkritisch):"
+        echo "$errors"
+    fi
     print_success "Datenbank wiederhergestellt"
 }
 
