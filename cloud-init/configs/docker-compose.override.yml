@@ -34,8 +34,8 @@ services:
   # ---------------------------------------------------------------------------
   db:
     labels:
-      - "docker-volume-backup.archive-pre=/bin/sh -c 'pg_dumpall --clean -U postgres > /var/lib/postgresql/data/backup_dump.sql'"
-      - "docker-volume-backup.archive-post=/bin/sh -c 'rm -f /var/lib/postgresql/data/backup_dump.sql'"
+      - "docker-volume-backup.archive-pre=/bin/sh -c 'pg_dump -U postgres -d postgres --clean --if-exists --quote-all-identifiers --no-owner --no-privileges --schema-only -f /var/lib/postgresql/data/backup_schema.sql && pg_dump -U postgres -d postgres --data-only --quote-all-identifiers --no-owner --no-privileges -f /var/lib/postgresql/data/backup_data.sql && pg_dumpall -U postgres --roles-only --no-role-passwords -f /var/lib/postgresql/data/backup_roles.sql'"
+      - "docker-volume-backup.archive-post=/bin/sh -c 'rm -f /var/lib/postgresql/data/backup_schema.sql /var/lib/postgresql/data/backup_data.sql /var/lib/postgresql/data/backup_roles.sql'"
 
   # ---------------------------------------------------------------------------
   # Caddy - Reverse Proxy & SSL Termination

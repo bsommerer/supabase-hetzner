@@ -21,8 +21,9 @@ crash.*.log
 *.tfvars
 *.tfvars.json
 
-# Aber terraform.tfvars.example behalten
+# Aber Example-Dateien behalten
 !terraform.tfvars.example
+!backend.tfvars.example
 
 # Secrets auto-generated file
 secrets.auto.tfvars

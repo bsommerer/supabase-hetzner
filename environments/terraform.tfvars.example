@@ -1,7 +1,8 @@
 # =============================================================================
 # Supabase Hetzner - Terraform Variablen
 # =============================================================================
-# Kopiere diese Datei nach terraform.tfvars und fülle die Werte aus.
+# Kopiere diese Datei nach environments/<env>/terraform.tfvars und fülle die Werte aus.
+# Beispiel: cp environments/terraform.tfvars.example environments/dev/terraform.tfvars
 # WICHTIG: terraform.tfvars NIEMALS in Git committen!
 # =============================================================================
 

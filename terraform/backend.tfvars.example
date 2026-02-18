@@ -1,0 +1,13 @@
+# =============================================================================
+# Terraform S3 Backend Konfiguration (Cloudflare R2)
+# =============================================================================
+# Kopiere nach backend.tfvars und füge Credentials ein.
+# WICHTIG: backend.tfvars NIEMALS in Git committen!
+# =============================================================================
+
+bucket     = "terraform-state"
+key        = "supabase-hetzner/terraform.tfstate"
+region     = "auto"
+endpoints  = { s3 = "https://<ACCOUNT_ID>.r2.cloudflarestorage.com" }
+access_key = ""
+secret_key = ""

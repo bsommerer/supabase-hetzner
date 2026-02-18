@@ -8,23 +8,23 @@
 #   ./scripts/deploy.sh [OPTIONEN]
 #
 # Optionen:
+#   --env ENV           Wählt die Umgebung (dev, prod, etc.)
 #   --init              Initialisiert Terraform und generiert Secrets
 #   --plan              Zeigt Terraform Plan an
 #   --apply             Führt terraform apply aus
 #   --destroy           Zerstört die Infrastruktur
-#   --restore DATE      Stellt Backup vom Datum wieder her (YYYY-MM-DD)
+#   --restore [DATE]    Stellt Backup wieder her (ohne Datum: interaktive Auswahl)
 #   --list-backups      Zeigt verfügbare Backups an
 #   --backup-now        Führt sofortiges Backup aus
-#   --test-backup       Testet Backup/Restore Funktionalität lokal
 #   --status            Zeigt Status der Infrastruktur
 #   --ssh               Verbindet via SSH zum Server
 #   --logs [SERVICE]    Zeigt Docker Logs (optional: spezifischer Service)
 #   --help              Zeigt diese Hilfe
 #
 # Beispiele:
-#   ./deploy.sh --init --apply         # Erstmaliges Deployment
-#   ./deploy.sh --apply --restore 2024-01-15  # Mit Restore
-#   ./deploy.sh --status               # Zeigt Server Status
+#   ./deploy.sh --env dev --init --apply    # Dev erstmalig deployen
+#   ./deploy.sh --env prod --apply          # Prod deployen
+#   ./deploy.sh --env dev --status          # Dev-Status anzeigen
 #
 # =============================================================================
 set -euo pipefail
@@ -32,6 +32,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 TERRAFORM_DIR="$PROJECT_DIR/terraform"
+ENVIRONMENTS_DIR="$PROJECT_DIR/environments"
+
+# Aktive Umgebung
+ACTIVE_ENV=""
+ENV_DIR=""
 
 # SSH Optionen - kein Passwort, nur Key Auth
 SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PasswordAuthentication=no"
@@ -70,6 +75,64 @@ print_error() {
 
 print_info() {
     echo -e "${CYAN}ℹ $1${NC}"
+}
+
+# =============================================================================
+# Multi-Environment
+# =============================================================================
+
+resolve_environment() {
+    if [ -z "$ACTIVE_ENV" ]; then
+        # Kein --env angegeben: Auto-Detection
+        if [ -d "$ENVIRONMENTS_DIR/prod" ]; then
+            ACTIVE_ENV="prod"
+        elif [ -d "$ENVIRONMENTS_DIR/dev" ]; then
+            ACTIVE_ENV="dev"
+        else
+            # Legacy-Modus: keine environments/, verwende terraform/ direkt
+            ENV_DIR=""
+            return
+        fi
+    fi
+
+    ENV_DIR="$ENVIRONMENTS_DIR/$ACTIVE_ENV"
+    if [ ! -d "$ENV_DIR" ]; then
+        print_error "Umgebung '$ACTIVE_ENV' nicht gefunden: $ENV_DIR"
+        print_info "Erstelle mit: mkdir -p $ENV_DIR"
+        exit 1
+    fi
+
+    print_info "Umgebung: $ACTIVE_ENV"
+}
+
+get_tfvars_path() {
+    if [ -n "$ENV_DIR" ]; then
+        echo "$ENV_DIR/terraform.tfvars"
+    else
+        echo "$TERRAFORM_DIR/terraform.tfvars"
+    fi
+}
+
+get_secrets_path() {
+    if [ -n "$ENV_DIR" ]; then
+        echo "$ENV_DIR/secrets.auto.tfvars"
+    else
+        echo "$TERRAFORM_DIR/secrets.auto.tfvars"
+    fi
+}
+
+get_tf_var_args() {
+    if [ -n "$ENV_DIR" ]; then
+        echo "-var-file=$ENV_DIR/terraform.tfvars -var-file=$ENV_DIR/secrets.auto.tfvars"
+    fi
+}
+
+select_workspace() {
+    if [ -n "$ACTIVE_ENV" ]; then
+        cd "$TERRAFORM_DIR"
+        terraform workspace select "$ACTIVE_ENV" 2>/dev/null || \
+            terraform workspace new "$ACTIVE_ENV"
+    fi
 }
 
 # =============================================================================
@@ -218,6 +281,7 @@ ${BLUE}Supabase Deployment Script${NC}
 Verwendung: $0 [OPTIONEN]
 
 Optionen:
+  ${GREEN}--env ENV${NC}           Wählt die Umgebung (dev, prod, etc.)
   ${GREEN}--init${NC}              Initialisiert Terraform und generiert Secrets
   ${GREEN}--plan${NC}              Zeigt Terraform Plan an
   ${GREEN}--apply${NC}             Führt terraform apply aus
@@ -233,14 +297,14 @@ Optionen:
   ${GREEN}--help${NC}              Zeigt diese Hilfe
 
 Beispiele:
+  ${CYAN}$0 --env dev --init --apply${NC}          # Dev erstmalig deployen
+  ${CYAN}$0 --env prod --apply${NC}                # Prod deployen
+  ${CYAN}$0 --env dev --status${NC}                # Dev-Status anzeigen
+  ${CYAN}$0 --env prod --restore${NC}              # Prod-Backup interaktiv restore
+  ${CYAN}$0 --env dev --logs kong${NC}             # Dev Kong Logs
   ${CYAN}$0 --init --apply${NC}                    # Erstmaliges Deployment
-  ${CYAN}$0 --restore${NC}                          # Backup interaktiv auswählen & restore
   ${CYAN}$0 --restore 2024-01-15${NC}              # Restore von spezifischem Datum
-  ${CYAN}$0 --apply --restore${NC}                  # Neues Deployment mit Restore
-  ${CYAN}$0 --test${NC}                            # Deployment testen
   ${CYAN}$0 --backup-now${NC}                      # Manuelles Backup
-  ${CYAN}$0 --status${NC}                          # Server Status anzeigen
-  ${CYAN}$0 --logs kong${NC}                       # Kong Logs anzeigen
 
 EOF
     exit 0
@@ -279,19 +343,29 @@ check_requirements() {
 }
 
 check_tfvars() {
-    if [ ! -f "$TERRAFORM_DIR/terraform.tfvars" ]; then
-        print_error "terraform.tfvars nicht gefunden!"
+    local tfvars_file
+    tfvars_file=$(get_tfvars_path)
+
+    if [ ! -f "$tfvars_file" ]; then
+        print_error "terraform.tfvars nicht gefunden: $tfvars_file"
         echo ""
-        echo "Erstelle terraform.tfvars basierend auf terraform.tfvars.example:"
-        echo "  cp terraform/terraform.tfvars.example terraform/terraform.tfvars"
-        echo "  # Dann Werte ausfüllen"
+        if [ -n "$ENV_DIR" ]; then
+            echo "Erstelle terraform.tfvars für Umgebung '$ACTIVE_ENV':"
+            echo "  cp environments/terraform.tfvars.example $ENV_DIR/terraform.tfvars"
+        else
+            echo "Erstelle terraform.tfvars:"
+            echo "  cp environments/terraform.tfvars.example terraform/terraform.tfvars"
+        fi
         exit 1
     fi
 }
 
 check_secrets() {
-    if [ ! -f "$TERRAFORM_DIR/secrets.auto.tfvars" ]; then
-        print_warning "secrets.auto.tfvars nicht gefunden"
+    local secrets_file
+    secrets_file=$(get_secrets_path)
+
+    if [ ! -f "$secrets_file" ]; then
+        print_warning "secrets.auto.tfvars nicht gefunden: $secrets_file"
         echo ""
         read -p "Secrets jetzt generieren? (y/n): " -n 1 -r
         echo
@@ -309,13 +383,22 @@ check_secrets() {
 
 generate_secrets() {
     print_header "Generiere Secrets"
-    "$SCRIPT_DIR/generate-secrets.sh"
+    local secrets_file
+    secrets_file=$(get_secrets_path)
+    "$SCRIPT_DIR/generate-secrets.sh" "$secrets_file"
 }
 
 terraform_init() {
     print_header "Initialisiere Terraform"
     cd "$TERRAFORM_DIR"
-    terraform init
+
+    local init_args=()
+    if [ -f "$TERRAFORM_DIR/backend.tfvars" ]; then
+        init_args+=("-backend-config=backend.tfvars")
+    fi
+
+    terraform init "${init_args[@]}"
+    select_workspace
     print_success "Terraform initialisiert"
 }
 
@@ -324,7 +407,9 @@ terraform_plan() {
     check_tfvars
     check_secrets
     cd "$TERRAFORM_DIR"
-    terraform plan
+    select_workspace
+    # shellcheck disable=SC2046
+    terraform plan $(get_tf_var_args)
 }
 
 terraform_apply() {
@@ -334,6 +419,7 @@ terraform_apply() {
     check_tfvars
     check_secrets
     cd "$TERRAFORM_DIR"
+    select_workspace
 
     # Hole Server IP aus State (falls vorhanden)
     local server_ip=$(terraform output -raw server_ip 2>/dev/null || echo "")
@@ -407,7 +493,12 @@ terraform_apply() {
     esac
 
     # Terraform apply ausführen (bei Status 2 oder 3)
+    local var_args
+    var_args=$(get_tf_var_args)
     local apply_args=("-auto-approve")
+    for arg in $var_args; do
+        apply_args+=("$arg")
+    done
     if [ -n "$restore_date" ]; then
         print_info "Restore von Backup: $restore_date"
         apply_args+=("-var=restore_from_backup=true")
@@ -487,7 +578,9 @@ terraform_destroy() {
     read -p "Zum Bestätigen 'yes' eingeben: " confirm
     if [ "$confirm" = "yes" ]; then
         cd "$TERRAFORM_DIR"
-        terraform destroy
+        select_workspace
+        # shellcheck disable=SC2046
+        terraform destroy $(get_tf_var_args)
         print_success "Infrastruktur zerstört"
     else
         print_info "Abgebrochen"
@@ -496,6 +589,7 @@ terraform_destroy() {
 
 show_outputs() {
     cd "$TERRAFORM_DIR"
+    select_workspace
 
     if terraform state list &> /dev/null; then
         echo -e "${CYAN}┌─────────────────────────────────────────────────────────────┐${NC}"
@@ -522,6 +616,7 @@ show_status() {
     print_header "Infrastruktur Status"
 
     cd "$TERRAFORM_DIR"
+    select_workspace
 
     if ! terraform state list &> /dev/null; then
         print_warning "Keine Infrastruktur deployed"
@@ -545,6 +640,7 @@ show_status() {
 
 connect_ssh() {
     cd "$TERRAFORM_DIR"
+    select_workspace
 
     local server_ip=$(terraform output -raw server_ip 2>/dev/null || echo "")
 
@@ -561,6 +657,7 @@ show_logs() {
     local service="${1:-}"
 
     cd "$TERRAFORM_DIR"
+    select_workspace
     local server_ip=$(terraform output -raw server_ip 2>/dev/null || echo "")
 
     if [ -z "$server_ip" ]; then
@@ -581,6 +678,7 @@ backup_now() {
     print_header "Manuelles Backup"
 
     cd "$TERRAFORM_DIR"
+    select_workspace
     local server_ip=$(terraform output -raw server_ip 2>/dev/null || echo "")
 
     if [ -z "$server_ip" ]; then
@@ -598,7 +696,8 @@ backup_now() {
 
 load_s3_credentials() {
     check_tfvars
-    local tfvars="$TERRAFORM_DIR/terraform.tfvars"
+    local tfvars
+    tfvars=$(get_tfvars_path)
     S3_ENDPOINT=$(grep 's3_endpoint' "$tfvars" | sed 's/.*=.*"\(.*\)"/\1/' | tr -d ' ')
     S3_ACCESS_KEY=$(grep 's3_access_key' "$tfvars" | sed 's/.*=.*"\(.*\)"/\1/' | tr -d ' ')
     S3_SECRET_KEY=$(grep 's3_secret_key' "$tfvars" | sed 's/.*=.*"\(.*\)"/\1/' | tr -d ' ')
@@ -696,6 +795,15 @@ LOGS_SERVICE=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --env)
+            if [[ $# -gt 1 && ! "$2" =~ ^-- ]]; then
+                ACTIVE_ENV="$2"
+                shift 2
+            else
+                print_error "--env benötigt einen Wert (dev, prod, ...)"
+                exit 1
+            fi
+            ;;
         --init)
             INIT=true
             shift
@@ -777,6 +885,7 @@ if ! $INIT && ! $PLAN && ! $APPLY && ! $DESTROY && ! $RESTORE && ! $LIST_BACKUPS
 fi
 
 check_requirements
+resolve_environment
 
 if $INIT; then
     generate_secrets
@@ -806,6 +915,7 @@ if $RESTORE && ! $APPLY; then
     fi
 
     cd "$TERRAFORM_DIR"
+    select_workspace
     restore_server_ip=$(terraform output -raw server_ip 2>/dev/null || echo "")
 
     if [ -z "$restore_server_ip" ]; then
@@ -818,6 +928,7 @@ fi
 
 if $TEST; then
     cd "$TERRAFORM_DIR"
+    select_workspace
     local_server_ip=$(terraform output -raw server_ip 2>/dev/null || echo "")
     local_domain=$(terraform output -raw supabase_url 2>/dev/null | sed 's|https://||')
 

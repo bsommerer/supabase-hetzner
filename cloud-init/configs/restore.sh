@@ -2,7 +2,11 @@
 # =============================================================================
 # Supabase Restore Script (Server-Version)
 # =============================================================================
-# Stellt ein Backup von Hetzner S3 wieder her.
+# Stellt ein Backup von S3 wieder her.
+# Folgt den Supabase Best Practices:
+#   - 3 separate Dumps: roles, schema, data
+#   - Restore mit --single-transaction und session_replication_role = replica
+#   - Dump wird in den Container kopiert (docker cp + psql -f)
 #
 # Verwendung:
 #   /opt/supabase/scripts/restore.sh YYYY-MM-DD
@@ -12,7 +16,6 @@
 # =============================================================================
 set -euo pipefail
 
-# Farben für Output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -26,7 +29,6 @@ NC='\033[0m'
 SUPABASE_DIR="/opt/supabase"
 RESTORE_DIR="/tmp/supabase-restore"
 
-# Lade nur benötigte Variablen aus .env (source ist unsicher bei Sonderzeichen)
 if [ ! -f "$SUPABASE_DIR/.env" ]; then
     echo -e "${RED}ERROR: $SUPABASE_DIR/.env nicht gefunden${NC}"
     exit 1
@@ -52,17 +54,9 @@ print_header() {
     echo ""
 }
 
-print_success() {
-    echo -e "${GREEN}✓ $1${NC}"
-}
-
-print_warning() {
-    echo -e "${YELLOW}⚠ $1${NC}"
-}
-
-print_error() {
-    echo -e "${RED}✗ $1${NC}"
-}
+print_success() { echo -e "${GREEN}✓ $1${NC}"; }
+print_warning() { echo -e "${YELLOW}⚠ $1${NC}"; }
+print_error() { echo -e "${RED}✗ $1${NC}"; }
 
 usage() {
     cat << EOF
@@ -153,82 +147,74 @@ start_database() {
     return 1
 }
 
-clean_database() {
-    echo "Bereinige bestehende Datenbank..."
-    cd "$SUPABASE_DIR"
+# Führt SQL-Datei im Container aus (docker cp + psql -f)
+exec_sql_file() {
+    local host_file=$1
+    shift
+    local container_path="/tmp/restore_$(basename "$host_file")"
 
-    # Terminiere alle anderen Verbindungen
-    docker compose exec -T db psql -U postgres -c \
-        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid <> pg_backend_pid();" \
-        >/dev/null 2>&1 || true
-
-    # Drop alle Nicht-Template-Datenbanken außer postgres
-    local databases
-    databases=$(docker compose exec -T db psql -U postgres -t -A -c \
-        "SELECT datname FROM pg_database WHERE datistemplate = false AND datname != 'postgres';" 2>/dev/null)
-
-    for db in $databases; do
-        [ -z "$db" ] && continue
-        echo "  Drop Database: $db"
-        docker compose exec -T db psql -U postgres -c "DROP DATABASE IF EXISTS \"$db\";" 2>/dev/null || true
-    done
-
-    # Drop alle Nicht-System-Schemas in postgres
-    docker compose exec -T db psql -U postgres -c "
-        DO \$\$
-        DECLARE r RECORD;
-        BEGIN
-            FOR r IN (SELECT nspname FROM pg_namespace
-                      WHERE nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-                      AND nspname NOT LIKE 'pg_%')
-            LOOP
-                EXECUTE 'DROP SCHEMA IF EXISTS ' || quote_ident(r.nspname) || ' CASCADE';
-            END LOOP;
-        END \$\$;
-    " 2>/dev/null || true
-
-    # Drop alle Nicht-System-Rollen
-    local roles
-    roles=$(docker compose exec -T db psql -U postgres -t -A -c \
-        "SELECT rolname FROM pg_roles WHERE rolname NOT LIKE 'pg_%' AND rolname != 'postgres';" 2>/dev/null)
-
-    for role in $roles; do
-        [ -z "$role" ] && continue
-        docker compose exec -T db psql -U postgres -c "DROP ROLE IF EXISTS \"$role\";" 2>/dev/null || true
-    done
-
-    print_success "Datenbank bereinigt"
+    docker cp "$host_file" supabase-db:"$container_path"
+    docker compose exec -T db psql -U postgres "$@" -f "$container_path" 2>&1
+    docker compose exec -T db rm -f "$container_path"
 }
 
 restore_database() {
-    local dump_file=$1
+    local backup_dir=$1
 
-    if [ ! -f "$dump_file" ]; then
-        print_warning "Kein SQL Dump gefunden: $dump_file"
-        return 1
-    fi
+    local roles_file="$backup_dir/backup_roles.sql"
+    local schema_file="$backup_dir/backup_schema.sql"
+    local data_file="$backup_dir/backup_data.sql"
 
-    clean_database
+    for f in "$roles_file" "$schema_file" "$data_file"; do
+        if [ ! -f "$f" ]; then
+            print_error "Dump-Datei nicht gefunden: $f"
+            exit 1
+        fi
+    done
 
-    echo "Stelle Datenbank wieder her..."
     cd "$SUPABASE_DIR"
-    local errors
-    errors=$(docker compose exec -T db psql -U postgres < "$dump_file" 2>&1 | \
+
+    # 1. Rollen wiederherstellen
+    echo "  Rollen wiederherstellen..."
+    exec_sql_file "$roles_file" 2>&1 | \
         grep -iE "^(ERROR|FATAL)" | \
         grep -v "already exists" | \
         grep -v "reserved role" | \
         grep -v "must be superuser" | \
-        grep -v "permission denied for schema _analytics" | \
-        grep -v "permission denied for schema _supavisor" | \
-        grep -v "permission denied for database _supabase" | \
-        grep -v "must be owner of" | \
-        grep -v "permission denied for table" | \
-        grep -v "permission denied to set parameter" || true)
+        grep -v "permission denied" || true
 
-    if [ -n "$errors" ]; then
-        print_warning "Fehler beim Restore (möglicherweise unkritisch):"
-        echo "$errors"
+    # 2. Schema wiederherstellen (--single-transaction für Atomarität)
+    echo "  Schema wiederherstellen..."
+    local schema_errors
+    schema_errors=$(exec_sql_file "$schema_file" --single-transaction 2>&1 | \
+        grep -iE "^(ERROR|FATAL)" | \
+        grep -v "already exists" | \
+        grep -v "reserved role" | \
+        grep -v "must be superuser" | \
+        grep -v "permission denied" | \
+        grep -v "must be owner of" || true)
+
+    if [ -n "$schema_errors" ]; then
+        print_warning "Schema-Fehler (möglicherweise unkritisch):"
+        echo "$schema_errors"
     fi
+
+    # 3. Daten wiederherstellen (session_replication_role = replica deaktiviert Trigger)
+    echo "  Daten wiederherstellen..."
+    local data_errors
+    data_errors=$(exec_sql_file "$data_file" \
+        --single-transaction \
+        --command "SET session_replication_role = replica" 2>&1 | \
+        grep -iE "^(ERROR|FATAL)" | \
+        grep -v "already exists" | \
+        grep -v "permission denied" | \
+        grep -v "must be owner of" || true)
+
+    if [ -n "$data_errors" ]; then
+        print_warning "Daten-Fehler (möglicherweise unkritisch):"
+        echo "$data_errors"
+    fi
+
     print_success "Datenbank wiederhergestellt"
 }
 
@@ -246,10 +232,6 @@ cleanup() {
     print_success "Aufgeräumt"
 }
 
-# =============================================================================
-# Hauptfunktion
-# =============================================================================
-
 decrypt_backup() {
     local encrypted_file=$1
     local output_file=$2
@@ -261,7 +243,6 @@ decrypt_backup() {
         rm -f "$encrypted_file"
         print_success "Backup entschlüsselt"
     else
-        # Kein Encryption Key - Datei umbenennen falls .gpg
         if [[ "$encrypted_file" == *.gpg ]]; then
             print_error "Backup ist verschlüsselt, aber BACKUP_ENCRYPTION_KEY fehlt!"
             exit 1
@@ -270,6 +251,10 @@ decrypt_backup() {
     fi
 }
 
+# =============================================================================
+# Hauptfunktion
+# =============================================================================
+
 do_restore() {
     local backup_file=$1
 
@@ -277,7 +262,6 @@ do_restore() {
     echo "Backup: $backup_file"
     echo ""
 
-    # Bestätigung (wenn interaktiv)
     if [ -t 0 ]; then
         echo -e "${YELLOW}WARNUNG: Dies überschreibt die aktuelle Datenbank!${NC}"
         read -p "Fortfahren? (yes/no): " confirm
@@ -297,12 +281,12 @@ do_restore() {
     fi
     download_backup "$backup_file" "$download_file"
 
-    # 2. Entschlüsseln (falls nötig)
-    print_header "2/6 - Backup entschlüsseln (falls verschlüsselt)"
+    # 2. Entschlüsseln
+    print_header "2/6 - Backup entschlüsseln"
     if [[ "$backup_file" == *.gpg ]]; then
         decrypt_backup "$download_file" "$RESTORE_DIR/backup.tar.gz"
     else
-        echo "Backup ist nicht verschlüsselt, überspringe..."
+        echo "Nicht verschlüsselt, überspringe..."
     fi
 
     # 3. Entpacken
@@ -318,19 +302,22 @@ do_restore() {
     print_header "5/6 - Datenbank wiederherstellen"
     start_database
 
-    local sql_dump=""
-    for f in "$RESTORE_DIR"/backup/db-data/backup_dump.sql "$RESTORE_DIR"/backup_dump.sql; do
-        if [ -f "$f" ]; then
-            sql_dump="$f"
+    # Backup-Verzeichnis mit den 3 Dump-Dateien finden
+    local backup_data_dir=""
+    for dir in "$RESTORE_DIR/backup/db-data" "$RESTORE_DIR"; do
+        if [ -f "$dir/backup_schema.sql" ] && [ -f "$dir/backup_data.sql" ] && [ -f "$dir/backup_roles.sql" ]; then
+            backup_data_dir="$dir"
             break
         fi
     done
 
-    if [ -n "$sql_dump" ]; then
-        restore_database "$sql_dump"
-    else
-        print_warning "Kein SQL Dump gefunden"
+    if [ -z "$backup_data_dir" ]; then
+        print_error "Kein gültiges Backup gefunden (backup_roles.sql, backup_schema.sql, backup_data.sql fehlen)"
+        print_error "Nur Backups im neuen Format (3 separate Dumps) werden unterstützt."
+        exit 1
     fi
+
+    restore_database "$backup_data_dir"
 
     # 6. Start
     print_header "6/6 - Services starten"
