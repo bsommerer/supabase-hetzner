@@ -351,10 +351,10 @@ check_tfvars() {
         echo ""
         if [ -n "$ENV_DIR" ]; then
             echo "Erstelle terraform.tfvars für Umgebung '$ACTIVE_ENV':"
-            echo "  cp environments/terraform.tfvars.example $ENV_DIR/terraform.tfvars"
+            echo "  cp terraform/terraform.tfvars.example $ENV_DIR/terraform.tfvars"
         else
             echo "Erstelle terraform.tfvars:"
-            echo "  cp environments/terraform.tfvars.example terraform/terraform.tfvars"
+            echo "  cp terraform/terraform.tfvars.example terraform/terraform.tfvars"
         fi
         exit 1
     fi

@@ -45,10 +45,11 @@ cd supabase-hetzner
 ### 2. Konfiguration erstellen
 
 ```bash
-cp terraform/terraform.tfvars.example terraform/terraform.tfvars
+mkdir -p environments/dev
+cp terraform/terraform.tfvars.example environments/dev/terraform.tfvars
 ```
 
-Bearbeite `terraform/terraform.tfvars` und fülle alle Werte aus:
+Bearbeite `environments/dev/terraform.tfvars` und fülle alle Werte aus:
 
 - `hcloud_token`: [Hetzner Cloud Console](https://console.hetzner.cloud/) → Project → Security → API Tokens
 - `cloudflare_api_token`: [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) (DNS Edit Permission)
@@ -57,22 +58,15 @@ Bearbeite `terraform/terraform.tfvars` und fülle alle Werte aus:
 - `admin_ips`: Deine IP-Adresse für SSH-Zugang
 - `s3_*`: S3 Storage Credentials (Cloudflare R2 oder Hetzner S3)
 
-### 3. Secrets generieren
+### 3. Deployment
 
 ```bash
-./scripts/generate-secrets.sh
+./scripts/deploy.sh --env dev --init --apply
 ```
 
-### 4. Deployment
+Das Script generiert automatisch Secrets und führt `terraform init` + `apply` aus.
 
-```bash
-cd terraform
-terraform init
-terraform plan
-terraform apply
-```
-
-### 5. Fertig!
+### 4. Fertig!
 
 Nach ~5-10 Minuten sind die Services erreichbar:
 
@@ -124,7 +118,7 @@ docker exec backup /usr/local/bin/backup
 
 ### Backup-Verschlüsselung
 
-Setze `backup_encryption_key` in `terraform.tfvars`:
+Setze `backup_encryption_key` in `environments/<env>/terraform.tfvars`:
 
 ```hcl
 backup_encryption_key = "dein-sicheres-passwort"
@@ -132,7 +126,7 @@ backup_encryption_key = "dein-sicheres-passwort"
 
 ### Backup-Benachrichtigungen
 
-Konfiguriere `notification_urls` in `terraform.tfvars`:
+Konfiguriere `notification_urls` in `environments/<env>/terraform.tfvars`:
 
 ```hcl
 # Telegram
@@ -159,8 +153,7 @@ ssh ubuntu@SERVER_IP
 **Option 1: Bei Neudeployment**
 
 ```bash
-cd terraform
-terraform apply -var="restore_from_backup=true" -var="backup_date=2024-01-15"
+./scripts/deploy.sh --env dev --apply --restore 2024-01-15
 ```
 
 **Option 2: Auf bestehendem Server**
@@ -253,26 +246,35 @@ ssh ubuntu@SERVER_IP
 
 ```
 supabase-hetzner/
-├── terraform/
-│   ├── main.tf                  # Hauptkonfiguration
-│   ├── variables.tf             # Variablen-Definitionen
-│   ├── outputs.tf               # Outputs
-│   ├── providers.tf             # Provider-Konfiguration
-│   ├── hetzner.tf               # Hetzner Ressourcen (VM, Firewall)
-│   ├── cloudflare.tf            # Cloudflare DNS + Health Check
-│   └── terraform.tfvars.example # Beispiel-Konfiguration
+├── terraform/                         # Terraform Code (keine Variablen-Werte!)
+│   ├── main.tf                        # Hauptkonfiguration
+│   ├── variables.tf                   # Variablen-Definitionen
+│   ├── outputs.tf                     # Outputs
+│   ├── providers.tf                   # Provider-Konfiguration
+│   ├── hetzner.tf                     # Hetzner Ressourcen (VM, Firewall)
+│   ├── cloudflare.tf                  # Cloudflare DNS
+│   ├── terraform.tfvars.example       # Beispiel-Konfiguration
+│   ├── backend.tfvars                 # S3 Backend für Terraform State
+│   └── backend.tfvars.example         # Beispiel Backend-Konfiguration
+├── environments/                      # Variablen pro Umgebung
+│   ├── dev/
+│   │   ├── terraform.tfvars           # Dev-Konfiguration
+│   │   └── secrets.auto.tfvars        # Dev-Secrets (auto-generiert)
+│   └── prod/
+│       ├── terraform.tfvars           # Prod-Konfiguration
+│       └── secrets.auto.tfvars        # Prod-Secrets (auto-generiert)
 ├── cloud-init/
-│   ├── user-data.yaml.tpl       # Server-Bootstrapping Template
+│   ├── user-data.yaml.tpl            # Server-Bootstrapping Template
 │   └── configs/
-│       ├── Caddyfile            # Caddy Reverse Proxy Config
-│       ├── docker-compose.override.yml  # Zusätzliche Services
-│       ├── supabase.env.tpl     # Supabase Umgebungsvariablen
-│       └── restore.sh           # Server Restore Script
+│       ├── Caddyfile                  # Caddy Reverse Proxy Config
+│       ├── docker-compose.override.yml
+│       ├── supabase.env.tpl           # Supabase Umgebungsvariablen
+│       └── restore.sh                 # Server Restore Script
 ├── scripts/
-│   ├── generate-secrets.sh      # Secret-Generierung (JWT Keys etc.)
-│   ├── test-backup.sh           # Lokaler Backup-Test
-│   ├── backup-now.sh            # Manuelles Backup triggern
-│   └── deploy.sh                # Deployment-Hilfsscript
+│   ├── deploy.sh                      # Deployment-Script (Multi-Environment)
+│   ├── generate-secrets.sh            # Secret-Generierung (JWT Keys etc.)
+│   ├── test-backup.sh                 # Lokaler Backup-Test
+│   └── test-deployment.sh             # Deployment-Verifizierung
 └── README.md
 ```
 

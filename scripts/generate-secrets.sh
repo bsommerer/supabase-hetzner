@@ -203,10 +203,8 @@ EOF
     echo -e "${GREEN}Secrets wurden erfolgreich generiert!${NC}"
     echo ""
     echo "Nächste Schritte:"
-    echo "  1. terraform.tfvars erstellen (siehe terraform.tfvars.example)"
-    echo "  2. cd terraform && terraform init"
-    echo "  3. terraform plan"
-    echo "  4. terraform apply"
+    echo "  1. terraform.tfvars erstellen (siehe terraform/terraform.tfvars.example)"
+    echo "  2. ./scripts/deploy.sh --env dev --init --apply"
     echo -e "${BLUE}==============================================================================${NC}"
 }
 
