@@ -61,6 +61,7 @@ id_*
 .env
 .env.*
 !.env.example
+!.env.functions.example
 
 # AWS Credentials
 .aws/
