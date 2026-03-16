@@ -24,6 +24,13 @@ Vollständig automatisiertes, wiederherstellbares Supabase Self-Hosting Setup au
 - S3-kompatibler Storage (Cloudflare R2, Hetzner S3, etc.)
 - Python3 + PyJWT (für Secret-Generierung)
 
+### Optional (Entwicklung)
+
+- [pre-commit](https://pre-commit.com/) – Lokale Code-Qualitätsprüfungen
+- [tflint](https://github.com/terraform-linters/tflint) – Terraform Linting
+- [trivy](https://github.com/aquasecurity/trivy) – Security-Scanning
+- make – Für das Makefile (auf den meisten Systemen vorinstalliert)
+
 ## Kosten (ca.)
 
 | Ressource | Test | Produktion |
@@ -58,7 +65,22 @@ Bearbeite `environments/dev/terraform.tfvars` und fülle alle Werte aus:
 - `admin_ips`: Deine IP-Adresse für SSH-Zugang
 - `s3_*`: S3 Storage Credentials (Cloudflare R2 oder Hetzner S3)
 
-### 3. Deployment
+### 3. Entwicklungsumgebung einrichten (optional)
+
+```bash
+make setup
+```
+
+Installiert Pre-commit Hooks für automatische Code-Qualitätsprüfungen (Terraform fmt, Linting, Security-Scans).
+
+### 4. Deployment
+
+```bash
+make init ENV=dev    # Terraform initialisieren + Secrets generieren
+make apply ENV=dev   # Infrastruktur deployen
+```
+
+Oder direkt via Script:
 
 ```bash
 ./scripts/deploy.sh --env dev --init --apply
@@ -66,7 +88,7 @@ Bearbeite `environments/dev/terraform.tfvars` und fülle alle Werte aus:
 
 Das Script generiert automatisch Secrets und führt `terraform init` + `apply` aus.
 
-### 4. Fertig!
+### 5. Fertig!
 
 Nach ~5-10 Minuten sind die Services erreichbar:
 
@@ -248,11 +270,12 @@ ssh ubuntu@SERVER_IP
 supabase-hetzner/
 ├── terraform/                         # Terraform Code (keine Variablen-Werte!)
 │   ├── main.tf                        # Hauptkonfiguration
-│   ├── variables.tf                   # Variablen-Definitionen
+│   ├── variables.tf                   # Variablen-Definitionen (mit Validierung)
 │   ├── outputs.tf                     # Outputs
 │   ├── providers.tf                   # Provider-Konfiguration
 │   ├── hetzner.tf                     # Hetzner Ressourcen (VM, Firewall)
 │   ├── cloudflare.tf                  # Cloudflare DNS
+│   ├── .tflint.hcl                    # TFLint Konfiguration
 │   ├── terraform.tfvars.example       # Beispiel-Konfiguration
 │   ├── backend.tfvars                 # S3 Backend für Terraform State
 │   └── backend.tfvars.example         # Beispiel Backend-Konfiguration
@@ -275,7 +298,53 @@ supabase-hetzner/
 │   ├── generate-secrets.sh            # Secret-Generierung (JWT Keys etc.)
 │   ├── test-backup.sh                 # Lokaler Backup-Test
 │   └── test-deployment.sh             # Deployment-Verifizierung
+├── .github/
+│   └── dependabot.yml                 # Automatische Provider-Updates
+├── .editorconfig                      # Konsistente Formatierung
+├── .pre-commit-config.yaml            # Lokale Code-Qualitätsprüfungen
+├── Makefile                           # Zentrale Projekt-Befehle
+├── renovate.json                      # Docker-Image-Updates
 └── README.md
+```
+
+## Makefile-Befehle
+
+Alle Operationen sind über `make` verfügbar (`make help` für vollständige Liste):
+
+```bash
+make setup              # Entwicklungsumgebung einrichten (pre-commit)
+make setup-env ENV=dev  # Neue Umgebung vorbereiten
+make init ENV=dev       # Terraform initialisieren
+make plan ENV=dev       # Änderungen anzeigen
+make apply ENV=dev      # Deployen
+make status ENV=dev     # Status prüfen
+make ssh ENV=dev        # SSH zum Server
+make logs ENV=dev       # Docker Logs
+make backup ENV=dev     # Manuelles Backup
+make restore ENV=dev    # Backup wiederherstellen
+make fmt                # Terraform formatieren
+make lint               # Terraform Linting
+make security           # Security-Scan
+make pre-commit         # Alle Checks ausführen
+```
+
+## Code-Qualität
+
+Das Projekt verwendet mehrere Tools zur Qualitätssicherung:
+
+- **pre-commit**: Automatische Prüfungen vor jedem Commit (Formatierung, Linting, Security)
+- **tflint**: Statische Analyse für Terraform mit Hetzner-spezifischen Regeln
+- **trivy**: Security-Scanning für Infrastructure-as-Code
+- **EditorConfig**: Konsistente Formatierung über alle Editoren
+- **Dependabot**: Automatische Terraform Provider-Updates via Pull Requests
+- **Renovate**: Automatische Docker-Image-Updates
+
+Setup:
+
+```bash
+make setup    # Installiert pre-commit Hooks
+make lint     # Manueller Linting-Durchlauf
+make security # Security-Scan
 ```
 
 ## Troubleshooting
