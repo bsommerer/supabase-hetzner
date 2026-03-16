@@ -40,7 +40,7 @@ DOMAIN="${2:-}"
 
 if [ -z "$SERVER_IP" ] || [ -z "$DOMAIN" ]; then
     echo "Verwendung: $0 <SERVER_IP> <DOMAIN>"
-    echo "Beispiel: $0 1.2.3.4 api.bsitservices.de"
+    echo "Beispiel: $0 1.2.3.4 supabase.example.com"
     exit 1
 fi
 

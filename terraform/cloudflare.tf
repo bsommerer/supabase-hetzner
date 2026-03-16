@@ -25,7 +25,7 @@ resource "cloudflare_record" "supabase_ipv6" {
   comment = "Supabase Self-Hosted IPv6 - Managed by Terraform"
 }
 
-# CNAME für Portainer (portainer.api.bsitservices.de)
+# CNAME für Portainer (portainer.supabase.example.com)
 resource "cloudflare_record" "portainer" {
   zone_id = var.cloudflare_zone_id
   name    = "portainer.${var.subdomain}"
