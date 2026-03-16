@@ -1,0 +1,35 @@
+# =============================================================================
+# Dependabot Konfiguration
+# =============================================================================
+# Automatische Updates für Terraform Provider und GitHub Actions.
+# Erstellt Pull Requests bei neuen Versionen.
+# =============================================================================
+
+version: 2
+
+updates:
+  # Terraform Provider Updates
+  - package-ecosystem: "terraform"
+    directory: "/terraform"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "terraform"
+    commit-message:
+      prefix: "chore(terraform):"
+
+  # GitHub Actions Updates
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(ci):"

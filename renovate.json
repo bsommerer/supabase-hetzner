@@ -1,0 +1,38 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Automatische Dependency-Updates für Docker-Images und Terraform",
+  "extends": [
+    "config:recommended"
+  ],
+  "labels": ["dependencies"],
+  "enabledManagers": ["docker-compose", "regex"],
+  "docker-compose": {
+    "fileMatch": ["cloud-init/configs/docker-compose\\.override\\.yml$"]
+  },
+  "regexManagers": [
+    {
+      "fileMatch": ["cloud-init/configs/docker-compose\\.override\\.yml$"],
+      "matchStrings": [
+        "image:\\s*(?<depName>[^:]+):(?<currentValue>[^\\s]+)"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Caddy Updates gruppieren",
+      "matchPackageNames": ["caddy"],
+      "groupName": "caddy"
+    },
+    {
+      "description": "Keine latest-Tags updaten (Portainer)",
+      "matchCurrentVersion": "latest",
+      "enabled": false
+    },
+    {
+      "description": "Major Updates manuell bestätigen",
+      "matchUpdateTypes": ["major"],
+      "labels": ["dependencies", "breaking"]
+    }
+  ]
+}
