@@ -86,6 +86,7 @@ resource "hcloud_server" "supabase" {
       secret_key_base       = var.secret_key_base != "" ? var.secret_key_base : random_password.secret_key_base.result
       vault_enc_key         = var.vault_enc_key != "" ? var.vault_enc_key : random_password.vault_enc_key.result
       logflare_api_key      = var.logflare_api_key != "" ? var.logflare_api_key : random_password.logflare_api_key.result
+      logflare_private_key  = var.logflare_private_key != "" ? var.logflare_private_key : random_password.logflare_private_key.result
       domain                = "${var.subdomain}.${var.domain}"
       acme_email            = var.acme_email
       s3_endpoint           = var.s3_endpoint
@@ -126,6 +127,11 @@ resource "random_password" "vault_enc_key" {
 }
 
 resource "random_password" "logflare_api_key" {
+  length  = 32
+  special = false
+}
+
+resource "random_password" "logflare_private_key" {
   length  = 32
   special = false
 }

@@ -140,6 +140,10 @@ main() {
     LOGFLARE_API_KEY=$(generate_alphanum 32)
     echo -e "${GREEN}✓${NC}"
 
+    echo -n "  Logflare Private Key...... "
+    LOGFLARE_PRIVATE_KEY=$(generate_alphanum 32)
+    echo -e "${GREEN}✓${NC}"
+
     # JWT Keys generieren
     echo -n "  Anon Key (JWT)............ "
     ANON_KEY=$(generate_jwt "anon" "$JWT_SECRET")
@@ -183,7 +187,8 @@ dashboard_password = "$DASHBOARD_PASSWORD"
 # Weitere Secrets
 secret_key_base  = "$SECRET_KEY_BASE"
 vault_enc_key    = "$VAULT_ENC_KEY"
-logflare_api_key = "$LOGFLARE_API_KEY"
+logflare_api_key     = "$LOGFLARE_API_KEY"
+logflare_private_key = "$LOGFLARE_PRIVATE_KEY"
 EOF
 
     echo -e "${GREEN}✓ Secrets geschrieben nach: $OUTPUT_FILE${NC}"

@@ -143,7 +143,14 @@ variable "vault_enc_key" {
 }
 
 variable "logflare_api_key" {
-  description = "Logflare API Key"
+  description = "Logflare API Key (Public/Ingest)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "logflare_private_key" {
+  description = "Logflare Private Access Token (Query/Management)"
   type        = string
   sensitive   = true
   default     = ""
