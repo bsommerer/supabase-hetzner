@@ -47,7 +47,7 @@ write_files:
       enabled = true
       bantime = 3600
       findtime = 600
-      maxretry = 3
+      maxretry = 10
 
   # ---------------------------------------------------------------------------
   # Supabase .env Datei (aus configs/supabase.env.tpl)
@@ -157,6 +157,12 @@ runcmd:
     cd /opt/supabase
     chown ubuntu:ubuntu /opt/supabase/.env
     docker compose pull
+
+  # ---------------------------------------------------------------------------
+  # Supabase starten
+  # ---------------------------------------------------------------------------
+  - |
+    cd /opt/supabase
     docker compose up -d
 
   # ---------------------------------------------------------------------------

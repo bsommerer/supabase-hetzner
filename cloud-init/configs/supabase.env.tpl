@@ -39,7 +39,7 @@ VAULT_ENC_KEY=${vault_enc_key}
 # Logflare
 LOGFLARE_API_KEY=${logflare_api_key}
 LOGFLARE_PUBLIC_ACCESS_TOKEN=${logflare_api_key}
-LOGFLARE_PRIVATE_ACCESS_TOKEN=${logflare_api_key}
+LOGFLARE_PRIVATE_ACCESS_TOKEN=${logflare_private_key}
 
 # S3 Storage
 STORAGE_BACKEND=s3
@@ -87,7 +87,7 @@ MAILER_URLPATHS_EMAIL_CHANGE=/auth/v1/verify
 PGRST_DB_SCHEMAS=public,storage,graphql_public
 
 # Functions
-FUNCTIONS_VERIFY_JWT=true
+FUNCTIONS_VERIFY_JWT=false
 
 # ImgProxy
 IMGPROXY_ENABLE_WEBP_DETECTION=true
