@@ -33,6 +33,8 @@ services:
   # Functions Override - App-spezifische Secrets via env_file
   # ---------------------------------------------------------------------------
   functions:
+    environment:
+      SUPABASE_PUBLIC_URL: "${SUPABASE_PUBLIC_URL}"
     env_file:
       - path: .env.functions
         required: false
