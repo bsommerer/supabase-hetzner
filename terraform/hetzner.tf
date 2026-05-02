@@ -71,7 +71,7 @@ resource "hcloud_server" "supabase" {
 
   user_data = templatefile("${path.module}/../cloud-init/user-data.yaml.tpl", {
     domain              = "${var.subdomain}.${var.domain}"
-    ssh_public_key      = var.ssh_public_key
+    ssh_authorized_keys = jsonencode(var.ssh_public_keys)
     restore_from_backup = var.restore_from_backup
     backup_date         = var.backup_date
 
@@ -109,6 +109,13 @@ resource "hcloud_server" "supabase" {
     environment = var.environment
     managed_by  = "terraform"
     service     = "supabase"
+  }
+
+  # user_data ist ForceNew — Änderungen (z.B. neue SSH-Keys in tfvars)
+  # würden sonst den Server neu bauen. Drift-Updates laufen über
+  # scripts/sync-keys.sh bzw. manuelle Recreations bei Bedarf.
+  lifecycle {
+    ignore_changes = [user_data]
   }
 }
 

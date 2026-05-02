@@ -30,9 +30,14 @@ variable "location" {
   }
 }
 
-variable "ssh_public_key" {
-  description = "SSH Public Key für Server-Zugang"
-  type        = string
+variable "ssh_public_keys" {
+  description = "Liste von SSH Public Keys für Server-Zugang (ein Eintrag pro Gerät)"
+  type        = list(string)
+
+  validation {
+    condition     = length(var.ssh_public_keys) >= 1
+    error_message = "ssh_public_keys muss mindestens einen Key enthalten — sonst Lockout."
+  }
 }
 
 variable "admin_ips" {

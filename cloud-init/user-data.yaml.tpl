@@ -7,8 +7,7 @@ users:
     groups: [sudo, docker]
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
-    ssh_authorized_keys:
-      - ${ssh_public_key}
+    ssh_authorized_keys: ${ssh_authorized_keys}
 
 package_update: true
 package_upgrade: true

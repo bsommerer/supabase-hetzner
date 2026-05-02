@@ -68,3 +68,12 @@ output "firewall_id" {
   description = "Hetzner Firewall ID"
   value       = hcloud_firewall.supabase.id
 }
+
+# =============================================================================
+# SSH Keys Output (für scripts/sync-keys.sh)
+# =============================================================================
+
+output "ssh_public_keys" {
+  description = "Konfigurierte SSH Public Keys (Quelle der Wahrheit für Server-Zugang)"
+  value       = var.ssh_public_keys
+}
