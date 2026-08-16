@@ -24,6 +24,24 @@ packages:
   - ufw
 
 # =============================================================================
+# Swap
+# =============================================================================
+# Der Supabase-Stack passt auf einen cx22 (2 vCPU / 4 GB) nur knapp. Ohne Swap
+# hat der Kernel bei Speicherdruck keine Wahl: er wirft Page-Cache weg und liest
+# ihn sofort wieder von Platte. Genau das ist am 2026-08-16 passiert, als der
+# Edge-Runtime auf 1,13 GB gewachsen war — Load 38 auf 2 Kernen bei 90 MB freiem
+# RAM, und selbst sshd wurde unbedienbar. Vorher hatte derselbe Prozess bereits
+# einmal den OOM-Killer ausgeloest.
+#
+# 2 GB Swap kosten nichts ausser Plattenplatz und fangen genau diese Spitzen ab.
+# swappiness 10: nur unter echtem Druck auslagern, nicht praeventiv — sonst
+# landen heisse Postgres-Seiten auf der Platte.
+swap:
+  filename: /swapfile
+  size: 2147483648
+  maxsize: 2147483648
+
+# =============================================================================
 # Konfigurationsdateien
 # =============================================================================
 
@@ -36,6 +54,17 @@ write_files:
       APT::Periodic::Update-Package-Lists "1";
       APT::Periodic::Unattended-Upgrade "1";
       APT::Periodic::AutocleanInterval "7";
+
+  # ---------------------------------------------------------------------------
+  # Speicher-Tuning (gehoert zum swap:-Block oben)
+  # ---------------------------------------------------------------------------
+  - path: /etc/sysctl.d/60-supabase-memory.conf
+    content: |
+      # Nur unter echtem Druck auslagern. Der Default (60) wuerde auch heisse
+      # Postgres-Seiten praeventiv auf die Platte schieben.
+      vm.swappiness = 10
+      # Dentry-/Inode-Cache weniger aggressiv wegwerfen als der Default (100).
+      vm.vfs_cache_pressure = 50
 
   # ---------------------------------------------------------------------------
   # Fail2ban Konfiguration

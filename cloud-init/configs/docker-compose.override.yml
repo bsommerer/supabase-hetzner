@@ -28,21 +28,47 @@ services:
       # R2 unterstuetzt kein S3 Object Tagging (x-amz-tagging → 501 NotImplemented)
       TUS_ALLOW_S3_TAGS: "false"
     volumes: []
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
   # ---------------------------------------------------------------------------
   # Functions Override - App-spezifische Secrets via env_file
   # ---------------------------------------------------------------------------
+  # Memory-Limit: V8 gibt den Speicher beendeter Isolates nicht ans Betriebssystem
+  # zurueck — der Prozess haelt dauerhaft seinen hoechsten je erreichten RSS.
+  # Ohne Limit ist dieser Peak lastabhaengig: nach einem Integration-Testlauf
+  # stand er bei 1,13 GB von 3,7 GB Gesamtspeicher, wodurch die Maschine ins
+  # Page-Cache-Thrashing lief (kein Swap) und selbst sshd verhungerte.
+  #
+  # Mit Limit uebernimmt Docker: der Container wird per OOM beendet und durch
+  # `restart: unless-stopped` (aus der Basis-Compose) in Sekunden neu gestartet.
+  # Aus "die Maschine steht" wird "die Functions sind kurz weg" — ein Fehlerbild,
+  # das sich von selbst erholt.
+  #
+  # Der eigentliche Deckel sitzt in main/index.ts des App-Repos
+  # (MAX_CONCURRENT_WORKERS x MEMORY_LIMIT_MB). Dieses Limit ist das Sicherheitsnetz
+  # darunter, falls dort etwas durchrutscht.
   functions:
     environment:
       SUPABASE_PUBLIC_URL: "${SUPABASE_PUBLIC_URL}"
     env_file:
       - path: .env.functions
         required: false
+    deploy:
+      resources:
+        limits:
+          memory: 768M
 
   # ---------------------------------------------------------------------------
   # Database Override - Backup Labels hinzufügen
   # ---------------------------------------------------------------------------
   db:
+    deploy:
+      resources:
+        limits:
+          memory: 640M
     labels:
       - "docker-volume-backup.archive-pre=/bin/sh -c 'pg_dump -U postgres -d postgres --clean --if-exists --quote-all-identifiers --no-owner --no-privileges --schema-only -f /var/lib/postgresql/data/backup_schema.sql && pg_dump -U postgres -d postgres --data-only --quote-all-identifiers --no-owner --no-privileges -f /var/lib/postgresql/data/backup_data.sql && pg_dumpall -U postgres --roles-only --no-role-passwords -f /var/lib/postgresql/data/backup_roles.sql'"
       - "docker-volume-backup.archive-post=/bin/sh -c 'rm -f /var/lib/postgresql/data/backup_schema.sql /var/lib/postgresql/data/backup_data.sql /var/lib/postgresql/data/backup_roles.sql'"
@@ -69,12 +95,14 @@ services:
       - caddy_data:/data
       - caddy_config:/config
       - caddy_logs:/var/log/caddy
+    # Ist-Verbrauch 32 MB — die frueheren 512M waren um Faktor 16 zu hoch und
+    # haben Budget blockiert, das andere Container brauchen.
     deploy:
       resources:
         limits:
-          memory: 512M
-        reservations:
           memory: 128M
+        reservations:
+          memory: 64M
           cpus: '0.25'
     labels:
       - "docker-volume-backup.stop-during-backup=false"
@@ -96,6 +124,10 @@ services:
     image: portainer/portainer-ce:latest
     restart: unless-stopped
     command: --admin-password-file /tmp/portainer_password
+    deploy:
+      resources:
+        limits:
+          memory: 64M
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
@@ -126,12 +158,95 @@ services:
       NOTIFICATION_URLS: "${NOTIFICATION_URLS:-}"
       NOTIFICATION_LEVEL: "error"
       GPG_PASSPHRASE: "${BACKUP_ENCRYPTION_KEY:-}"
+    deploy:
+      resources:
+        limits:
+          memory: 96M
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./volumes/db/data:/backup/db-data:ro
       - /opt/supabase/.env:/backup/config/.env:ro
     networks:
       - default
+
+  # ---------------------------------------------------------------------------
+  # Memory-Budget fuer die uebrigen Supabase-Services
+  # ---------------------------------------------------------------------------
+  # Die Maschine hat 3819 MB. Ohne Limits kann ein einzelner Container die
+  # gesamte Kiste ins Page-Cache-Thrashing ziehen — genau das ist passiert, als
+  # der Edge-Runtime auf 1,13 GB gewachsen war: Load 38 bei 90 MB freiem RAM,
+  # und selbst sshd wurde unbedienbar.
+  #
+  # Jedes Limit ist am gemessenen Ist-Verbrauch bemessen (docker stats) plus
+  # Reserve. Die Summe der Limits liegt bewusst ueber dem physischen RAM:
+  # Limits sind Obergrenzen gegen Ausreisser, keine Reservierungen. Der reale
+  # Spitzenbedarf liegt bei ~3,2 GB, es bleiben also ~600 MB fuer Kernel,
+  # Page-Cache und SSH.
+  #
+  # Ist-Werte zum Zeitpunkt der Festlegung (2026-08-16):
+  #   analytics 568 | db 482 | kong 399 | studio 207 | realtime 182
+  #   pooler 169 | storage 137 | meta 107 | vector 41 | rest 37
+  #   imgproxy 23 | auth 11
+  # ---------------------------------------------------------------------------
+  analytics:
+    deploy:
+      resources:
+        limits:
+          memory: 704M
+
+  kong:
+    deploy:
+      resources:
+        limits:
+          memory: 448M
+
+  studio:
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  realtime:
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  supavisor:
+    deploy:
+      resources:
+        limits:
+          memory: 224M
+
+  meta:
+    deploy:
+      resources:
+        limits:
+          memory: 160M
+
+  vector:
+    deploy:
+      resources:
+        limits:
+          memory: 96M
+
+  rest:
+    deploy:
+      resources:
+        limits:
+          memory: 96M
+
+  imgproxy:
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  auth:
+    deploy:
+      resources:
+        limits:
+          memory: 96M
 
 # =============================================================================
 # Zusätzliche Volumes
